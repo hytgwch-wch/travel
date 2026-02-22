@@ -1,0 +1,34 @@
+# 出差发票自动整理系统 - 出差人信息配置
+
+# 默认出差人（当发票中无法识别姓名时使用）
+default: "王春晖"
+
+# 出差人列表及其别名
+travelers:
+  - name: "王春晖"
+    aliases:
+      - "王春晖"
+      - "WANG CHUNHUI"
+      - "Wang Chunhui"
+
+  - name: "王春晖1"
+    aliases:
+      - "王春晖1"
+      - "徐洋"  # 徐洋映射到王春晖1
+      - "XU YANG"
+      - "Xu Yang"
+      - "楼宗恺"  # 开票人名字也映射到王春晖1
+
+  - name: "张三"
+    aliases:
+      - "张三"
+      - "ZHANG SAN"
+      - "Zhang San"
+
+  - name: "李四"
+    aliases:
+      - "李四"
+      - "LI SI"
+      - "Li Si"
+
+# 可根据需要添加更多出差人

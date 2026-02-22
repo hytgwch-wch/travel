@@ -1,0 +1,29 @@
+# Invoice Organizer - Dependencies
+
+# Baidu Pan sync
+bypy>=1.8.0
+
+# OCR recognition
+paddleocr>=2.7.0
+paddlepaddle>=2.5.0
+
+# Image processing
+opencv-python>=4.8.0
+Pillow>=10.0.0
+
+# PDF processing
+PyMuPDF>=1.23.0
+
+# Config parsing
+PyYAML>=6.0
+
+# Scheduler
+apscheduler>=3.10.0
+
+# Logging
+loguru>=0.7.0
+
+# Development/Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+black>=23.0.0
