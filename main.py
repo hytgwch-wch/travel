@@ -22,6 +22,7 @@ from loguru import logger
 
 from src.config import get_config, setup_logging
 from src.scheduler import TaskScheduler
+from src.trip_grouper import TripGrouper
 
 
 def cmd_run(args):
@@ -114,6 +115,35 @@ def cmd_failed(args):
     print("\n" + "-" * 80 + "\n")
 
 
+def cmd_trips(args):
+    """Group invoices into complete business trips."""
+    grouper = TripGrouper(invoices_dir=args.input)
+
+    if args.report_only:
+        # Generate report only
+        trips = grouper.generate_report(args.output)
+        print(f"\nReport generated: {args.output}")
+        print(f"Total trips: {len(trips)}")
+    else:
+        # Generate trip directories and report
+        trips = grouper.generate_trip_directories(args.output)
+
+        print(f"\n" + "=" * 50)
+        print("TRIPS GROUPING COMPLETE")
+        print("=" * 50)
+        print(f"Total trips: {len(trips)}")
+        print(f"Output directory: {args.output}")
+        print(f"Report: {args.output}/README.md")
+
+        # Print summary
+        for trip in trips:
+            print(f"\n{trip.trip_id}: {trip.traveler} -> {trip.destination}")
+            print(f"  Date: {trip.start_date} to {trip.end_date}")
+            print(f"  Invoices: {len(trip.invoices)}")
+
+        print("\n" + "=" * 50 + "\n")
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -128,6 +158,8 @@ Examples:
   python main.py --stats            Show processing statistics
   python main.py --recent           Show recent records
   python main.py --failed           Show failed records
+  python main.py --trips            Group invoices into business trips
+  python main.py --trips --report-only  Generate trip report only
         """
     )
 
@@ -163,6 +195,11 @@ Examples:
         action="store_true",
         help="Show failed processing records"
     )
+    mode_group.add_argument(
+        "--trips",
+        action="store_true",
+        help="Group invoices into complete business trips"
+    )
 
     # Optional arguments
     parser.add_argument(
@@ -188,6 +225,21 @@ Examples:
         default=20,
         help="Limit number of records to show (default: 20)"
     )
+    parser.add_argument(
+        "--input", "-i",
+        default="invoices",
+        help="Input invoices directory (default: invoices)"
+    )
+    parser.add_argument(
+        "--output", "-o",
+        default="trips",
+        help="Output trips directory (default: trips)"
+    )
+    parser.add_argument(
+        "--report-only",
+        action="store_true",
+        help="Only generate report without organizing files"
+    )
 
     args = parser.parse_args()
 
@@ -207,6 +259,8 @@ Examples:
             cmd_recent(args)
         elif args.failed:
             cmd_failed(args)
+        elif args.trips:
+            cmd_trips(args)
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
         sys.exit(130)

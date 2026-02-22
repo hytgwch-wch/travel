@@ -42,6 +42,8 @@ logs/
 data/*.db
 data/*.sqlite
 data/*.sqlite3
+trips/
+invoices/
 
 # OS
 .DS_Store
