@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}配置管理 - 差旅发票自动整理系统{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">配置管理</h1>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px;">
+    <!-- System Configuration -->
+    <div class="card">
+        <h2 class="card-title">⚙️ 系统配置</h2>
+        <form id="config-form" onsubmit="saveConfig(event)">
+            <div class="form-group">
+                <label class="form-label">输出目录</label>
+                <input type="text" class="form-input" id="local_output_dir" value="invoices">
+            </div>
+            <div class="form-group">
+                <label class="form-label">默认出差人</label>
+                <input type="text" class="form-input" id="default_traveler" value="王春晖">
+            </div>
+            <button type="submit" class="btn">💾 保存配置</button>
+        </form>
+    </div>
+
+    <!-- Email Configuration -->
+    <div class="card">
+        <h2 class="card-title">📧 邮箱配置</h2>
+        <div style="padding: 15px; background: #fff3cd; border-radius: 6px; margin-bottom: 15px; font-size: 14px;">
+            ⚠️ 邮箱配置需要在 <code>config/email.yaml</code> 文件中手动修改
+        </div>
+        <div class="form-group">
+            <label class="form-label">IMAP 服务器</label>
+            <input type="text" class="form-input" id="imap_server" value="imap.zju.edu.cn" disabled>
+        </div>
+        <div class="form-group">
+            <label class="form-label">IMAP 端口</label>
+            <input type="text" class="form-input" id="imap_port" value="993" disabled>
+        </div>
+        <div class="form-group">
+            <label class="form-label">用户名</label>
+            <input type="text" class="form-input" id="email_username" placeholder="your-email@zju.edu.cn" disabled>
+        </div>
+        <p style="font-size: 12px; color: #666; margin-top: 10px;">
+            💡 提示：修改配置文件后需重启程序
+        </p>
+    </div>
+
+    <!-- Travelers Configuration -->
+    <div class="card">
+        <h2 class="card-title">👥 出差人配置</h2>
+        <div style="padding: 15px; background: #fff3cd; border-radius: 6px; margin-bottom: 15px; font-size: 14px;">
+            ⚠️ 出差人配置需要在 <code>config/travelers.yaml</code> 文件中手动修改
+        </div>
+        <div id="travelers-list">
+            <!-- This would be loaded from config -->
+            <div style="padding: 10px; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 10px;">
+                <strong>王春晖</strong> - 副研究员 - 某某实验室
+            </div>
+        </div>
+    </div>
+
+    <!-- System Status -->
+    <div class="card">
+        <h2 class="card-title">📊 系统状态</h2>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div style="padding: 15px; background: #d1fae5; border-radius: 6px; text-align: center;">
+                <div style="font-size: 24px; font-weight: 700; color: #065f46;">✅</div>
+                <div style="font-size: 14px; color: #065f46;">数据库正常</div>
+            </div>
+            <div style="padding: 15px; background: #d1fae5; border-radius: 6px; text-align: center;">
+                <div style="font-size: 24px; font-weight: 700; color: #065f46;">✅</div>
+                <div style="font-size: 14px; color: #065f46;">OCR 引擎就绪</div>
+            </div>
+            <div style="padding: 15px; background: #dbeafe; border-radius: 6px; text-align: center;">
+                <div style="font-size: 24px; font-weight: 700; color: #1e40af;">📧</div>
+                <div style="font-size: 14px; color: #1e40af;">邮箱已配置</div>
+            </div>
+            <div style="padding: 15px; background: #d1fae5; border-radius: 6px; text-align: center;">
+                <div style="font-size: 24px; font-weight: 700; color: #065f46;">✅</div>
+                <div style="font-size: 14px; color: #065f46;">文件系统正常</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Configuration Files Info -->
+<div class="card">
+    <h2 class="card-title">📄 配置文件说明</h2>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>文件</th>
+                    <th>说明</th>
+                    <th>位置</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>config.yaml</code></td>
+                    <td>主配置文件，包含输出目录、处理选项等</td>
+                    <td><code>config/config.yaml</code></td>
+                </tr>
+                <tr>
+                    <td><code>email.yaml</code></td>
+                    <td>邮箱配置，包含 IMAP 服务器和登录信息</td>
+                    <td><code>config/email.yaml</code></td>
+                </tr>
+                <tr>
+                    <td><code>travelers.yaml</code></td>
+                    <td>出差人信息配置</td>
+                    <td><code>config/travelers.yaml</code></td>
+                </tr>
+                <tr>
+                    <td><code>parsers.yaml</code></td>
+                    <td>发票解析规则配置</td>
+                    <td><code>config/parsers.yaml</code></td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<scriptdocument.addEventListener('DOMContentLoaded', function() {
+    // Load current configuration
+    fetch('/api/config')
+        .then(r => r.json())
+        .then(data => {
+            if (data.local_output_dir) {
+                document.getElementById('local_output_dir').value = data.local_output_dir;
+            }
+            if (data.default_traveler) {
+                document.getElementById('default_traveler').value = data.default_traveler;
+            }
+        })
+        .catch(err => console.error('Failed to load config:', err));
+});
+
+function saveConfig(event) {
+    event.preventDefault();
+
+    const config = {
+        local_output_dir: document.getElementById('local_output_dir').value,
+        default_traveler: document.getElementById('default_traveler').value
+    };
+
+    fetch('/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(config)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alert('配置保存成功！');
+        } else {
+            alert('配置保存失败: ' + data.error);
+        }
+    })
+    .catch(err => {
+        alert('请求失败: ' + err);
+    });
+}
+</script>
+{% endblock %}

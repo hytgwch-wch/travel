@@ -47,12 +47,31 @@ class InvoiceRenamer:
         # Get extension
         ext = original_ext if original_ext.startswith('.') else f'.{original_ext}'
 
-        # Format date
+        # Special handling for bills/statements
+        if info.type == InvoiceType.BILL or info.is_statement:
+            return self._generate_bill_name(info, ext)
+
+        # Special handling for hotel invoices
+        if info.type == InvoiceType.HOTEL:
+            return self._generate_hotel_name(info, ext)
+
+        # Format date - use date range for taxi and airport transfer
         date_str = ""
-        if info.date:
+        if info.type in [InvoiceType.TAXI, InvoiceType.AIRPORT_TRANSFER]:
+            # Use trip date range for taxi and airport transfer
+            # Always use full date range format (start至end), even if same day
+            if info.trip_start_date and info.trip_end_date:
+                start_str = info.trip_start_date.strftime("%Y-%m-%d")
+                end_str = info.trip_end_date.strftime("%Y-%m-%d")
+                date_str = f"{start_str}至{end_str}"
+            elif info.date:
+                date_str = info.date.strftime("%Y-%m-%d")
+            else:
+                date_str = "无日期"
+        elif info.date:
             date_str = info.date.strftime("%Y-%m-%d")
         else:
-            date_str = "unknown_date"
+            date_str = "无日期"
 
         # Format amount
         amount_str = ""
@@ -74,11 +93,82 @@ class InvoiceRenamer:
             else:
                 # Car invoice - no route info
                 base_name += "_发票"
+        elif info.type == InvoiceType.TAXI:
+            # 打车: is_trip_receipt 标志判断是行程单还是发票
+            if info.is_trip_receipt:
+                base_name += "_行程单"
+            else:
+                base_name += "_发票"
+
+        # Add refund fee indicator
+        if info.is_refund:
+            base_name += "_退票费"
 
         # Clean up name
         base_name = self._sanitize_filename(base_name)
 
         # Combine with extension
+        return f"{base_name}{ext}"
+
+    def _generate_bill_name(self, info: InvoiceInfo, ext: str) -> str:
+        """
+        Generate filename for hotel bills/statements (结账单).
+
+        Format with dates: {入住日期}_{离开日期}_结账单_{amount}.pdf
+        Format without dates: {日期}_结账单_{amount}.pdf
+        """
+        # Format amount
+        amount_str = ""
+        if info.amount:
+            amount_str = f"{info.amount:.2f}"
+        else:
+            amount_str = "0.00"
+
+        # Check if we have stay dates
+        if info.check_in_date and info.check_out_date:
+            check_in_str = info.check_in_date.strftime("%Y-%m-%d")
+            check_out_str = info.check_out_date.strftime("%Y-%m-%d")
+            base_name = f"{check_in_str}_{check_out_str}_结账单_{amount_str}"
+        else:
+            # No check-in dates available, use invoice date
+            date_str = ""
+            if info.date:
+                date_str = info.date.strftime("%Y-%m-%d")
+            else:
+                date_str = "无日期"
+            base_name = f"{date_str}_结账单_{amount_str}"
+
+        # Clean up name
+        base_name = self._sanitize_filename(base_name)
+
+        return f"{base_name}{ext}"
+
+    def _generate_hotel_name(self, info: InvoiceInfo, ext: str) -> str:
+        """
+        Generate filename for hotel invoices.
+
+        Format with dates: {入住日期}_退房日期_住宿_{amount}_{traveler}.pdf
+        Format without dates: 无日期_住宿_{amount}_{traveler}.pdf
+        """
+        # Format amount
+        amount_str = ""
+        if info.amount:
+            amount_str = f"{info.amount:.2f}"
+        else:
+            amount_str = "0.00"
+
+        # Check if we have stay dates
+        if info.check_in_date and info.check_out_date:
+            check_in_str = info.check_in_date.strftime("%Y-%m-%d")
+            check_out_str = info.check_out_date.strftime("%Y-%m-%d")
+            base_name = f"{check_in_str}_{check_out_str}_住宿_{amount_str}_{info.traveler or 'unknown'}"
+        else:
+            # No check-in dates available
+            base_name = f"无日期_住宿_{amount_str}_{info.traveler or 'unknown'}"
+
+        # Clean up name
+        base_name = self._sanitize_filename(base_name)
+
         return f"{base_name}{ext}"
 
     def _get_name_parts(self, info: InvoiceInfo) -> list[str]:
@@ -114,8 +204,8 @@ class InvoiceRenamer:
             return type_part + [info.origin or "", info.destination or ""]
 
         elif info.type == InvoiceType.HOTEL:
-            # 住宿: {类型}_{城市}_{酒店名}
-            return type_part + [info.city or "", info.hotel_name or ""]
+            # 住宿发票命名在 generate_name 中特殊处理，这里不应被调用
+            return []
 
         elif info.type == InvoiceType.DINING:
             # 餐饮: {类型}_{城市}

@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+
+{% block title %}任务管理 - 差旅发票自动整理系统{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">任务管理</h1>
+</div>
+
+<!-- Task Actions -->
+<div class="card">
+    <h2 class="card-title">执行任务</h2>
+    <p style="margin-bottom: 20px; color: #666;">手动触发系统任务，执行发票下载、解析、归类等操作。</p>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+        <!-- Run Once Task -->
+        <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
+            <h3 style="margin-bottom: 10px;">📥 单次执行</h3>
+            <p style="color: #666; margin-bottom: 15px;">执行一次完整的处理流程，包括下载新发票、解析、重命名和归类。</p>
+            <button class="btn btn-success" style="width: 100%;" onclick="runTask()">▶ 执行任务</button>
+            <div id="run-task-result" style="margin-top: 10px;"></div>
+        </div>
+
+        <!-- Generate Trips -->
+        <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
+            <h3 style="margin-bottom: 10px;">✈️ 生成行程</h3>
+            <p style="color: #666; margin-bottom: 15px;">基于已处理的发票，自动生成行程归类和汇总报告。</p>
+            <button class="btn" style="width: 100%;" onclick="generateTrips()">✈️ 生成行程</button>
+            <div id="generate-trips-result" style="margin-top: 10px;"></div>
+        </div>
+
+        <!-- Sync Email -->
+        <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
+            <h3 style="margin-bottom: 10px;">📧 同步邮箱</h3>
+            <p style="color: #666; margin-bottom: 15px;">仅从邮箱下载新发票附件，不进行解析处理。</p>
+            <button class="btn btn-secondary" style="width: 100%;" onclick="syncEmail()">📥 同步邮箱</button>
+            <div id="sync-email-result" style="margin-top: 10px;"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Task Status -->
+<div class="card">
+    <h2 class="card-title">任务状态</h2>
+    <div id="task-status">
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>加载中...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Task History -->
+<div class="card">
+    <h2 class="card-title">任务历史</h2>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>时间</th>
+                    <th>类型</th>
+                    <th>处理文件</th>
+                    <th>状态</th>
+                </tr>
+            </thead>
+            <tbody id="task-history">
+                <!-- Loading state -->
+                <tr>
+                    <td colspan="4" style="text-align: center;">
+                        <div class="loading" style="padding: 20px;">
+                            <div class="spinner" style="width: 20px; height: 20px;"></div>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Load task status on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadTaskStatus();
+    loadTaskHistory();
+});
+
+function loadTaskStatus() {
+    fetch('/api/tasks/status')
+        .then(r => r.json())
+        .then(data => {
+            const statusDiv = document.getElementById('task-status');
+            if (data.running) {
+                statusDiv.innerHTML = '<p class="badge badge-warning">⏳ 任务运行中...</p>';
+            } else {
+                const lastRun = data.last_run ? new Date(data.last_run).toLocaleString('zh-CN') : '未运行';
+                statusDiv.innerHTML = '<p class="badge badge-success">✅ 系统就绪</p><p style="margin-top: 10px; color: #666;">上次运行: ' + lastRun + '</p>';
+            }
+        })
+        .catch(err => {
+            document.getElementById('task-status').innerHTML = '<p class="badge badge-error">❌ 状态获取失败</p>';
+        });
+}
+
+function loadTaskHistory() {
+    // This would load from database
+    // For now, show placeholder
+    const tbody = document.getElementById('task-history');
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="4" style="text-align: center; color: #666;">
+                暂无历史记录
+            </td>
+        </tr>
+    `;
+}
+
+function runTask() {
+    const resultDiv = document.getElementById('run-task-result');
+    resultDiv.innerHTML = '<p class="badge badge-warning">⏳ 执行中...</p>';
+
+    fetch('/api/tasks/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            resultDiv.innerHTML = `
+                <p class="badge badge-success">✅ 执行成功</p>
+                <p style="margin-top: 5px; font-size: 14px;">
+                    下载: ${data.result.files_downloaded} | 处理: ${data.result.files_processed}
+                </p>
+            `;
+            loadTaskStatus();
+        } else {
+            resultDiv.innerHTML = '<p class="badge badge-error">❌ ' + data.error + '</p>';
+        }
+    })
+    .catch(err => {
+        resultDiv.innerHTML = '<p class="badge badge-error">❌ 请求失败</p>';
+    });
+}
+
+function generateTrips() {
+    const resultDiv = document.getElementById('generate-trips-result');
+    resultDiv.innerHTML = '<p class="badge badge-warning">⏳ 生成中...</p>';
+
+    fetch('/api/tasks/trips', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            resultDiv.innerHTML = '<p class="badge badge-success">✅ 生成成功，共 ' + data.trip_count + ' 个行程</p>';
+        } else {
+            resultDiv.innerHTML = '<p class="badge badge-error">❌ ' + data.error + '</p>';
+        }
+    })
+    .catch(err => {
+        resultDiv.innerHTML = '<p class="badge badge-error">❌ 请求失败</p>';
+    });
+}
+
+function syncEmail() {
+    const resultDiv = document.getElementById('sync-email-result');
+    resultDiv.innerHTML = '<p class="badge badge-warning">⏳ 同步中...</p>';
+
+    fetch('/api/tasks/sync-email', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            resultDiv.innerHTML = '<p class="badge badge-success">✅ ' + data.message + '</p>';
+        } else {
+            resultDiv.innerHTML = '<p class="badge badge-error">❌ ' + data.error + '</p>';
+        }
+    })
+    .catch(err => {
+        resultDiv.innerHTML = '<p class="badge badge-error">❌ 同步失败: ' + err + '</p>';
+    });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+
+{% block title %}智能识别 - 差旅发票自动整理系统{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">智能识别增强</h1>
+    <div>
+        <button class="btn" onclick="learnPatterns()">🧠 学习历史模式</button>
+    </div>
+</div>
+
+<!-- Info Banner -->
+<div class="card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+    <h2 style="color: white; margin-bottom: 10px;">✨ 智能识别功能</h2>
+    <p style="opacity: 0.9;">
+        基于历史发票数据自动学习路线模式、金额规律，为未分类发票提供智能归类建议。
+        支持相似发票检测和自动行程关联。
+    </p>
+</div>
+
+<!-- Features Grid -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value" id="patterns-count">-</div>
+        <div class="stat-label">已学习路线模式</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="suggestions-count">-</div>
+        <div class="stat-label">智能建议数量</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="associations-count">-</div>
+        <div class="stat-label">可关联发票数</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">95%+</div>
+        <div class="stat-label">预期准确率</div>
+    </div>
+</div>
+
+<!-- Learn Patterns Section -->
+<div class="card">
+    <h2 class="card-title">🧠 从历史数据学习</h2>
+    <p style="color: #666; margin-bottom: 20px;">
+        分析已处理的发票，自动学习常见路线、金额范围和时间模式。
+    </p>
+    <button class="btn btn-success" onclick="learnPatterns()">开始学习</button>
+    <div id="learn-result" style="margin-top: 15px;"></div>
+</div>
+
+<!-- Suggestions Section -->
+<div class="card">
+    <h2 class="card-title">💡 智能归类建议</h2>
+    <p style="color: #666; margin-bottom: 20px;">
+        为"普通打车"文件夹中的未分类发票提供归类建议。
+    </p>
+    <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+        <button class="btn" onclick="loadSuggestions()">刷新建议</button>
+        <button class="btn btn-secondary" onclick="generateReport()">生成报告</button>
+    </div>
+    <div class="table-container">
+        <table id="suggestions-table">
+            <thead>
+                <tr>
+                    <th>发票文件</th>
+                    <th>建议类型</th>
+                    <th>建议路线</th>
+                    <th>置信度</th>
+                    <th>理由</th>
+                </tr>
+            </thead>
+            <tbody id="suggestions-tbody">
+                <tr>
+                    <td colspan="5" style="text-align: center; color: #666;">
+                        点击"刷新建议"加载智能建议
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Auto Association Section -->
+<div class="card">
+    <h2 class="card-title">🔗 自动行程关联</h2>
+    <p style="color: #666; margin-bottom: 20px;">
+        基于日期接近度和地点相似性，自动建议发票应该归属的行程。
+    </p>
+    <button class="btn" onclick="loadAssociations()">加载关联建议</button>
+    <div id="associations-content" style="margin-top: 15px;">
+        <p style="color: #666; text-align: center;">点击上方按钮加载关联建议</p>
+    </div>
+</div>
+
+<!-- Report Preview -->
+<div class="card" id="report-card" style="display: none;">
+    <h2 class="card-title">📄 智能建议报告</h2>
+    <pre id="report-content" style="background: #f9fafb; padding: 15px; border-radius: 6px; overflow-x: auto; max-height: 400px; overflow-y: auto; font-size: 12px;"></pre>
+</div>
+
+<!-- How It Works -->
+<div class="card">
+    <h2 class="card-title">📘 工作原理</h2>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+        <div style="padding: 15px; background: #f9fafb; border-radius: 8px;">
+            <h3 style="margin-bottom: 10px;">1. 模式学习</h3>
+            <p style="color: #666; font-size: 14px;">
+                扫描已处理的发票，学习常见的出发地-目的地路线、金额范围和时间规律。
+            </p>
+        </div>
+        <div style="padding: 15px; background: #f9fafb; border-radius: 8px;">
+            <h3 style="margin-bottom: 10px;">2. 相似度匹配</h3>
+            <p style="color: #666; font-size: 14px;">
+                使用字符串相似度算法，将未分类发票与历史记录进行比对，找出最相似的发票。
+            </p>
+        </div>
+        <div style="padding: 15px; background: #f9fafb; border-radius: 8px;">
+            <h3 style="margin-bottom: 10px;">3. 行程关联</h3>
+            <p style="color: #666; font-size: 14px;">
+                基于日期接近度和地点相似性，智能推断发票应该归属的行程。
+            </p>
+        </div>
+        <div style="padding: 15px; background: #f9fafb; border-radius: 8px;">
+            <h3 style="margin-bottom: 10px;">4. 城市归一化</h3>
+            <p style="color: #666; font-size: 14px;">
+                自动将"杭州东"、"杭州西"归一化为"杭州"，提高匹配准确率。
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<scriptlet learnedPatterns = null;
+
+function learnPatterns() {
+    const resultDiv = document.getElementById('learn-result');
+    resultDiv.innerHTML = '<p class="badge badge-warning">⏳ 学习中...</p>';
+
+    fetch('/api/smart/learn', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            resultDiv.innerHTML = '<p class="badge badge-success">✅ ' + data.message + '</p>';
+            learnedPatterns = true;
+            // Auto-refresh suggestions
+            setTimeout(loadSuggestions, 1000);
+            setTimeout(loadAssociations, 1500);
+        } else {
+            resultDiv.innerHTML = '<p class="badge badge-error">❌ ' + data.error + '</p>';
+        }
+    })
+    .catch(err => {
+        resultDiv.innerHTML = '<p class="badge badge-error">❌ 学习失败</p>';
+    });
+}
+
+function loadSuggestions() {
+    const tbody = document.getElementById('suggestions-tbody');
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;"><div class="loading"><div class="spinner"></div></div></td></tr>';
+
+    fetch('/api/smart/suggestions')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('suggestions-count').textContent = data.suggestions.length;
+
+            if (data.suggestions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #666;">暂无建议</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = data.suggestions.map(s => {
+                const route = s.suggested_origin && s.suggested_destination
+                    ? `${s.suggested_origin} → ${s.suggested_destination}`
+                    : '-';
+                const confidenceClass = s.confidence >= 0.8 ? 'badge-success' :
+                                      s.confidence >= 0.5 ? 'badge-warning' : 'badge-error';
+
+                return `
+                    <tr>
+                        <td title="${s.invoice}">${s.invoice.split('/').pop()}</td>
+                        <td>${s.suggested_type || '-'}</td>
+                        <td>${route}</td>
+                        <td><span class="badge ${confidenceClass}">${(s.confidence * 100).toFixed(0)}%</span></td>
+                        <td style="font-size: 12px; color: #666;">${s.reason}</td>
+                    </tr>
+                `;
+            }).join('');
+        })
+        .catch(err => {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;" class="badge badge-error">加载失败</td></tr>';
+        });
+}
+
+function loadAssociations() {
+    const contentDiv = document.getElementById('associations-content');
+    contentDiv.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+    fetch('/api/smart/associate')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('associations-count').textContent = data.associations.length;
+
+            if (data.associations.length === 0) {
+                contentDiv.innerHTML = '<p style="color: #666; text-align: center;">暂无可关联的发票</p>';
+                return;
+            }
+
+            let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 15px;">';
+
+            data.associations.forEach(assoc => {
+                const tripName = assoc.trip.split('/')[-1].replace(/_/g, ' ');
+                html += `
+                    <div style="padding: 15px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb;">
+                        <h4 style="margin-bottom: 10px;">📁 ${tripName}</h4>
+                        <p style="font-size: 14px; color: #666; margin-bottom: 10px;">
+                            可关联 ${assoc.count} 张发票
+                        </p>
+                        <div style="max-height: 100px; overflow-y: auto; font-size: 12px;">
+                            ${assoc.invoices.map(inv => '<div>• ' + inv.split('/').pop() + '</div>').join('')}
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            contentDiv.innerHTML = html;
+        })
+        .catch(err => {
+            contentDiv.innerHTML = '<p class="badge badge-error">加载失败</p>';
+        });
+}
+
+function generateReport() {
+    if (!learnedPatterns) {
+        alert('请先执行"学习历史模式"');
+        return;
+    }
+
+    const reportCard = document.getElementById('report-card');
+    const reportContent = document.getElementById('report-content');
+    reportCard.style.display = 'block';
+
+    reportContent.textContent = '生成中...';
+
+    fetch('/api/smart/report', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            reportContent.textContent = data.content;
+        } else {
+            reportContent.textContent = '生成失败: ' + data.error;
+        }
+    })
+    .catch(err => {
+        reportContent.textContent = '生成失败';
+    });
+}
+
+// Auto-load on page load if patterns exist
+document.addEventListener('DOMContentLoaded', function() {
+    // Check if we have historical data
+    fetch('/api/stats')
+        .then(r => r.json())
+        .then(data => {
+            if (data.total_processed > 50) {
+                // Auto-learn if enough data
+                setTimeout(() => {
+                    learnPatterns();
+                }, 1000);
+            }
+        })
+        .catch(() => {});
+});
+</script>
+{% endblock %}
