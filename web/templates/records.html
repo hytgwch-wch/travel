@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}处理记录 - 差旅发票自动整理系统{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">处理记录</h1>
+    <div>
+        <button class="btn btn-secondary" onclick="location.reload()">🔄 刷新</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card">
+    <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+        <span style="font-weight: 500;">筛选:</span>
+        <select class="form-input" style="width: auto;" onchange="filterRecords(this.value)">
+            <option value="all">全部状态</option>
+            <option value="success">成功</option>
+            <option value="error">失败</option>
+        </select>
+        <input type="text" class="form-input" style="width: 200px;" placeholder="搜索文件名..." onkeyup="searchRecords(this.value)">
+    </div>
+</div>
+
+<!-- Records Table -->
+<div class="card">
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th width="80">ID</th>
+                    <th>文件名</th>
+                    <th width="100">类型</th>
+                    <th width="150">处理时间</th>
+                    <th width="80">状态</th>
+                    <th>备注</th>
+                </tr>
+            </thead>
+            <tbody id="records-body">
+                {% for record in records %}
+                <tr>
+                    <td>{{ record.id }}</td>
+                    <td title="{{ record.final_path or record.remote_path }}">{{ (record.final_path or record.remote_path)[:60] }}{{ '...' if (record.final_path or record.remote_path)|length > 60 else '' }}</td>
+                    <td>{{ record.invoice_type or '-' }}</td>
+                    <td>{{ record.processed_at.strftime('%Y-%m-%d %H:%M:%S') if record.processed_at else '-' }}</td>
+                    <td>
+                        {% if record.status == 'success' %}
+                            <span class="badge badge-success">成功</span>
+                        {% else %}
+                            <span class="badge badge-error">失败</span>
+                        {% endif %}
+                    </td>
+                    <td style="font-size: 12px; color: #666;">{{ record.error_message or '-' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if total_pages > 1 %}
+    <div style="margin-top: 20px; display: flex; justify-content: center; gap: 10px;">
+        {% if page > 1 %}
+            <a href="?page={{ page - 1 }}" class="btn btn-secondary">上一页</a>
+        {% endif %}
+
+        <span style="padding: 10px 20px;">
+            第 {{ page }} / {{ total_pages }} 页 (共 {{ total }} 条)
+        </span>
+
+        {% if page < total_pages %}
+            <a href="?page={{ page + 1 }}" class="btn btn-secondary">下一页</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterRecords(status) {
+    // Filter implementation would go here
+    console.log('Filter:', status);
+}
+
+function searchRecords(query) {
+    // Search implementation would go here
+    console.log('Search:', query);
+}
+</script>
+{% endblock %}

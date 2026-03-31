@@ -1,0 +1,299 @@
+{% extends "base.html" %}
+
+{% block title %}统计报表 - 差旅发票自动整理系统{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">统计报表</h1>
+    <div>
+        <button class="btn btn-success" onclick="exportReport('comprehensive')">📊 导出综合报表</button>
+    </div>
+</div>
+
+<!-- Summary Stats -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value" id="total-processed">-</div>
+        <div class="stat-label">总处理文件数</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="total-amount">-</div>
+        <div class="stat-label">总金额 (元)</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="total-types">-</div>
+        <div class="stat-label">发票类型数</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="total-travelers">-</div>
+        <div class="stat-label">出差人数</div>
+    </div>
+</div>
+
+<!-- Tabs -->
+<div class="card">
+    <div style="display: flex; gap: 10px; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">
+        <button class="tab-btn active" onclick="showTab('monthly')" style="padding: 10px 20px; border: none; background: none; cursor: pointer; border-bottom: 2px solid #667eea;">月度统计</button>
+        <button class="tab-btn" onclick="showTab('traveler')" style="padding: 10px 20px; border: none; background: none; cursor: pointer;">出差人统计</button>
+        <button class="tab-btn" onclick="showTab('type')" style="padding: 10px 20px; border: none; background: none; cursor: pointer;">类型统计</button>
+    </div>
+
+    <!-- Monthly Stats Tab -->
+    <div id="tab-monthly" class="tab-content">
+        <h3 style="margin-bottom: 15px;">月度统计</h3>
+        <div style="margin-bottom: 15px;">
+            <label>显示月数: </label>
+            <select id="months-select" onchange="loadMonthlyStats()" style="padding: 5px 10px;">
+                <option value="6">6个月</option>
+                <option value="12" selected>12个月</option>
+                <option value="24">24个月</option>
+            </select>
+            <button class="btn btn-secondary" onclick="exportReport('monthly')" style="margin-left: 10px;">导出</button>
+        </div>
+        <div class="table-container">
+            <table id="monthly-table">
+                <thead>
+                    <tr>
+                        <th>月份</th>
+                        <th>总金额</th>
+                        <th>发票数</th>
+                        <th>交通</th>
+                        <th>住宿</th>
+                        <th>餐饮</th>
+                    </tr>
+                </thead>
+                <tbody id="monthly-tbody">
+                    <tr><td colspan="6" style="text-align: center;">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Traveler Stats Tab -->
+    <div id="tab-traveler" class="tab-content" style="display: none;">
+        <h3 style="margin-bottom: 15px;">出差人统计</h3>
+        <div style="margin-bottom: 15px;">
+            <button class="btn btn-secondary" onclick="exportReport('traveler')">导出</button>
+        </div>
+        <div class="table-container">
+            <table id="traveler-table">
+                <thead>
+                    <tr>
+                        <th>出差人</th>
+                        <th>总金额</th>
+                        <th>发票数</th>
+                        <th>行程数</th>
+                        <th>交通</th>
+                        <th>住宿</th>
+                    </tr>
+                </thead>
+                <tbody id="traveler-tbody">
+                    <tr><td colspan="6" style="text-align: center;">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Type Stats Tab -->
+    <div id="tab-type" class="tab-content" style="display: none;">
+        <h3 style="margin-bottom: 15px;">发票类型统计</h3>
+        <div style="margin-bottom: 15px;">
+            <button class="btn btn-secondary" onclick="exportReport('type')">导出</button>
+        </div>
+        <div class="table-container">
+            <table id="type-table">
+                <thead>
+                    <tr>
+                        <th>类型</th>
+                        <th>总金额</th>
+                        <th>发票数</th>
+                        <th>平均金额</th>
+                    </tr>
+                </thead>
+                <tbody id="type-tbody">
+                    <tr><td colspan="4" style="text-align: center;">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Chart Placeholder -->
+<div class="card">
+    <h2 class="card-title">趋势图</h2>
+    <div style="height: 300px; display: flex; align-items: center; justify-content: center; background: #f9fafb; border-radius: 8px;">
+        <p style="color: #666;">图表功能开发中... 📈</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+.tab-btn {
+    color: #666;
+}
+
+.tab-btn:hover {
+    color: #667eea;
+}
+
+.tab-btn.active {
+    color: #667eea;
+    border-bottom: 2px solid #667eea;
+}
+
+.tab-content {
+    animation: fadeIn 0.3s;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<scriptdocument.addEventListener('DOMContentLoaded', function() {
+    loadSummaryStats();
+    loadMonthlyStats();
+    loadTravelerStats();
+    loadTypeStats();
+});
+
+function showTab(tabName) {
+    // Hide all tabs
+    document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+
+    // Show selected tab
+    document.getElementById('tab-' + tabName).style.display = 'block';
+    event.target.classList.add('active');
+}
+
+function loadSummaryStats() {
+    fetch('/api/stats')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('total-processed').textContent = data.total_processed;
+
+            // Calculate total amount from by_type
+            let totalAmount = 0;
+            for (let type in data.by_type) {
+                totalAmount += data.by_type[type];
+            }
+            document.getElementById('total-amount').textContent = totalAmount.toLocaleString('zh-CN', {minimumFractionDigits: 2});
+            document.getElementById('total-types').textContent = Object.keys(data.by_type).length;
+        });
+}
+
+function loadMonthlyStats() {
+    const months = document.getElementById('months-select').value;
+
+    fetch('/api/stats/monthly?months=' + months)
+        .then(r => r.json())
+        .then(data => {
+            const tbody = document.getElementById('monthly-tbody');
+            if (data.stats.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #666;">暂无数据</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = data.stats.map(s => {
+                // Calculate transport total
+                const transport = (s.by_type['机票'] || 0) + (s.by_type['火车'] || 0) +
+                                   (s.by_type['打车'] || 0) + (s.by_type['接送机'] || 0);
+                return `
+                    <tr>
+                        <td>${s.month}</td>
+                        <td>${s.total_amount.toLocaleString('zh-CN', {minimumFractionDigits: 2})}</td>
+                        <td>${s.invoice_count}</td>
+                        <td>${transport.toLocaleString('zh-CN', {minimumFractionDigits: 2})}</td>
+                        <td>${(s.by_type['住宿'] || 0).toLocaleString('zh-CN', {minimumFractionDigits: 2})}</td>
+                        <td>${(s.by_type['餐饮'] || 0).toLocaleString('zh-CN', {minimumFractionDigits: 2})}</td>
+                    </tr>
+                `;
+            }).join('');
+        });
+}
+
+function loadTravelerStats() {
+    fetch('/api/stats/traveler')
+        .then(r => r.json())
+        .then(data => {
+            const tbody = document.getElementById('traveler-tbody');
+            if (data.stats.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #666;">暂无数据</td></tr>';
+                return;
+            }
+
+            document.getElementById('total-travelers').textContent = data.stats.length;
+
+            tbody.innerHTML = data.stats.map(s => {
+                const transport = (s.by_type['机票'] || 0) + (s.by_type['火车'] || 0) +
+                                   (s.by_type['打车'] || 0) + (s.by_type['接送机'] || 0);
+                return `
+                    <tr>
+                        <td>${s.name}</td>
+                        <td>${s.total_amount.toLocaleString('zh-CN', {minimumFractionDigits: 2})}</td>
+                        <td>${s.invoice_count}</td>
+                        <td>${s.trip_count}</td>
+                        <td>${transport.toLocaleString('zh-CN', {minimumFractionDigits: 2})}</td>
+                        <td>${(s.by_type['住宿'] || 0).toLocaleString('zh-CN', {minimumFractionDigits: 2})}</td>
+                    </tr>
+                `;
+            }).join('');
+        });
+}
+
+function loadTypeStats() {
+    fetch('/api/stats/type')
+        .then(r => r.json())
+        .then(data => {
+            const tbody = document.getElementById('type-tbody');
+            if (data.stats.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #666;">暂无数据</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = data.stats.map(s => `
+                <tr>
+                    <td>${s.type}</td>
+                    <td>${s.total_amount.toLocaleString('zh-CN', {minimumFractionDigits: 2})}</td>
+                    <td>${s.invoice_count}</td>
+                    <td>${s.avg_amount.toLocaleString('zh-CN', {minimumFractionDigits: 2})}</td>
+                </tr>
+            `).join('');
+        });
+}
+
+function exportReport(type) {
+    const months = document.getElementById('months-select') ? document.getElementById('months-select').value : 12;
+
+    if (!confirm('确定要导出报表吗？')) return;
+
+    const statusDiv = document.createElement('div');
+    statusDiv.style.cssText = 'position: fixed; bottom: 20px; right: 20px; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000;';
+    statusDiv.innerHTML = '<p class="badge badge-warning">⏳ 生成中...</p>';
+    document.body.appendChild(statusDiv);
+
+    fetch('/api/stats/export?type=' + type + '&months=' + months)
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                statusDiv.innerHTML = '<p class="badge badge-success">✅ 生成成功</p>';
+                // Trigger download
+                window.location.href = data.download_url;
+                setTimeout(() => document.body.removeChild(statusDiv), 2000);
+            } else {
+                statusDiv.innerHTML = '<p class="badge badge-error">❌ ' + data.error + '</p>';
+                setTimeout(() => document.body.removeChild(statusDiv), 3000);
+            }
+        })
+        .catch(err => {
+            statusDiv.innerHTML = '<p class="badge badge-error">❌ 导出失败</p>';
+            setTimeout(() => document.body.removeChild(statusDiv), 3000);
+        });
+}
+</script>
+{% endblock %}

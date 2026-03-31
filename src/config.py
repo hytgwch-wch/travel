@@ -23,6 +23,35 @@ class BaiduPanConfig:
 
 
 @dataclass
+class EmailConfig:
+    """Email (IMAP) configuration for downloading invoice attachments"""
+    # IMAP server settings
+    imap_server: str = "imap.zju.edu.cn"
+    imap_port: int = 993
+    mailbox: str = "INBOX"
+
+    # Authentication
+    email_address: str = ""
+    authorization_code: str = ""
+
+    # Sync settings
+    temp_dir: str = "temp"
+    check_days: int = 30  # Check emails from last N days
+    max_emails: int = 200  # Max emails to retrieve per sync
+
+    # Filter settings - sender keywords (domains or email patterns)
+    sender_keywords: List[str] = field(default_factory=list)
+    # Filter settings - subject keywords
+    subject_keywords: List[str] = field(default_factory=list)
+    # Allowed attachment extensions
+    attachment_extensions: List[str] = field(default_factory=lambda: ['.pdf', '.jpg', '.png'])
+
+    # Processing options
+    mark_as_read: bool = True  # Mark emails as read after processing
+    delete_after_download: bool = False  # Not recommended
+
+
+@dataclass
 class OcrConfig:
     """OCR engine configuration"""
     use_angle_cls: bool = True
@@ -60,6 +89,7 @@ class OptionsConfig:
 class Config:
     """Main configuration class"""
     baidu_pan: BaiduPanConfig = field(default_factory=BaiduPanConfig)
+    email: EmailConfig = field(default_factory=EmailConfig)
     local_output_dir: str = "invoices"
     default_traveler: str = "张三"
     options: OptionsConfig = field(default_factory=OptionsConfig)
@@ -93,6 +123,7 @@ class Config:
 
             # Create nested configs
             baidu_pan = BaiduPanConfig(**data.get("baidu_pan", {}))
+            email = EmailConfig(**data.get("email", {}))
             options = OptionsConfig(**data.get("options", {}))
             ocr = OcrConfig(**data.get("ocr", {}))
             scheduler = SchedulerConfig(**data.get("scheduler", {}))
@@ -101,6 +132,7 @@ class Config:
             # Create main config
             config = cls(
                 baidu_pan=baidu_pan,
+                email=email,
                 local_output_dir=data.get("local_output_dir", "invoices"),
                 default_traveler=data.get("default_traveler", "张三"),
                 options=options,
@@ -336,7 +368,7 @@ def get_traveler_config(reload: bool = False) -> TravelerConfig:
 
 def setup_logging(config: Optional[LoggingConfig] = None):
     """
-    Setup logging configuration.
+    Setup logging configuration with enhanced features.
 
     Args:
         config: Logging configuration (uses global config if None)
@@ -347,24 +379,38 @@ def setup_logging(config: Optional[LoggingConfig] = None):
     # Remove default handler
     logger.remove()
 
-    # Add console handler
+    # Create logs directory
+    log_dir = Path("logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Add console handler with colors
     logger.add(
         sink=lambda msg: print(msg, end=""),
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
         level=config.level,
+        colorize=True,
     )
 
-    # Add file handler
-    log_file = Path(config.file)
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-
+    # Add general log file with daily rotation
     logger.add(
-        sink=config.file,
-        rotation=f"{config.max_size_mb} MB",
-        retention=f"{config.retention_days} days",
-        level=config.level,
+        sink=log_dir / "invoice_{time:YYYY-MM-DD}.log",
+        rotation="00:00",  # Rotate at midnight
+        retention="30 days",
+        compression="zip",
+        level="DEBUG",
         encoding="utf-8",
         format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
     )
 
-    logger.info("Logging initialized")
+    # Add error log file (separate from general log)
+    logger.add(
+        sink=log_dir / "errors_{time:YYYY-MM-DD}.log",
+        rotation="00:00",
+        retention="90 days",  # Keep error logs longer
+        compression="zip",
+        level="ERROR",
+        encoding="utf-8",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
+    )
+
+    logger.info("Logging initialized with daily rotation and error tracking")

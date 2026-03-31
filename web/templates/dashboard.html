@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+
+{% block title %}仪表盘 - 差旅发票自动整理系统{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">仪表盘</h1>
+    <div>
+        <span class="badge badge-success">系统运行中</span>
+    </div>
+</div>
+
+<!-- Stats Grid -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.total_processed }}</div>
+        <div class="stat-label">总处理文件数</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.today_processed }}</div>
+        <div class="stat-label">今日处理</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ trip_stats|length }}</div>
+        <div class="stat-label">出差人数</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ trip_stats|sum(attribute='trip_count') }}</div>
+        <div class="stat-label">总行程数</div>
+    </div>
+</div>
+
+<!-- Invoice Type Distribution -->
+<div class="card">
+    <h2 class="card-title">发票类型分布</h2>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>类型</th>
+                    <th>数量</th>
+                    <th>占比</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for type_name, count in stats.invoices_by_type.items() %}
+                <tr>
+                    <td>{{ type_name }}</td>
+                    <td>{{ count }}</td>
+                    <td>{{ "%.1f"|format((count / stats.total_processed * 100) if stats.total_processed > 0 else 0) }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div class="card">
+    <h2 class="card-title">最近活动</h2>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>时间</th>
+                    <th>文件</th>
+                    <th>类型</th>
+                    <th>状态</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in stats.recent_activity %}
+                <tr>
+                    <td>{{ record.processed_at.strftime('%Y-%m-%d %H:%M') if record.processed_at else '-' }}</td>
+                    <td title="{{ record.final_path or record.remote_path }}">{{ (record.final_path or record.remote_path)[:50] }}{{ '...' if (record.final_path or record.remote_path)|length > 50 else '' }}</td>
+                    <td>{{ record.invoice_type or '-' }}</td>
+                    <td>
+                        {% if record.status == 'success' %}
+                            <span class="badge badge-success">成功</span>
+                        {% else %}
+                            <span class="badge badge-error">失败</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="card">
+    <h2 class="card-title">快捷操作</h2>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <button class="btn btn-success" onclick="runTask()">▶ 执行任务</button>
+        <button class="btn" onclick="generateTrips()">✈️ 生成行程</button>
+        <a href="{{ url_for('tasks') }}" class="btn btn-secondary">查看任务</a>
+    </div>
+</div>
+
+<!-- Travelers Summary -->
+{% if trip_stats %}
+<div class="card">
+    <h2 class="card-title">出差人概览</h2>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>姓名</th>
+                    <th>行程数</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for traveler in trip_stats %}
+                <tr>
+                    <td>{{ traveler.name }}</td>
+                    <td>{{ traveler.trip_count }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function runTask() {
+    if (!confirm('确定要执行一次完整的处理流程吗？')) return;
+
+    fetch('/api/tasks/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alert('任务执行成功！\n处理文件数: ' + data.result.files_processed);
+            location.reload();
+        } else {
+            alert('任务执行失败: ' + data.error);
+        }
+    })
+    .catch(err => alert('请求失败: ' + err));
+}
+
+function generateTrips() {
+    if (!confirm('确定要重新生成行程归类吗？')) return;
+
+    fetch('/api/tasks/trips', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alert('行程生成成功！\n生成行程数: ' + data.trip_count);
+            location.reload();
+        } else {
+            alert('行程生成失败: ' + data.error);
+        }
+    })
+    .catch(err => alert('请求失败: ' + err));
+}
+
+// Auto-refresh every 30 seconds
+setTimeout(() => location.reload(), 30000);
+</script>
+{% endblock %}

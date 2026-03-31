@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}文件管理 - 差旅发票自动整理系统{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">文件管理</h1>
+    <div>
+        <label class="btn" style="cursor: pointer;">
+            📤 上传文件
+            <input type="file" accept=".pdf,.zip" style="display: none;" onchange="uploadFile(this)">
+        </label>
+    </div>
+</div>
+
+<!-- Files by Type -->
+{% for type_name, files in files_by_type.items() %}
+<div class="card">
+    <h2 class="card-title">{{ type_name }} ({{ files|length }})</h2>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>文件名</th>
+                    <th width="100">大小</th>
+                    <th width="100">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for file in files[:20] %}
+                <tr>
+                    <td>{{ file.name }}</td>
+                    <td>{{ "%.1f KB"|format(file.size / 1024) }}</td>
+                    <td>
+                        <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="viewFile('{{ file.path }}')">查看</button>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if files|length > 20 %}
+                <tr>
+                    <td colspan="3" style="text-align: center; color: #666;">
+                        还有 {{ files|length - 20 }} 个文件...
+                    </td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <p style="text-align: center; color: #666;">暂无文件</p>
+</div>
+{% endfor %}
+
+<!-- Upload Status -->
+<div id="upload-status" style="display: none; position: fixed; bottom: 20px; right: 20px; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000;"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function uploadFile(input) {
+    if (input.files.length === 0) return;
+
+    const file = input.files[0];
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const statusDiv = document.getElementById('upload-status');
+    statusDiv.style.display = 'block';
+    statusDiv.innerHTML = '<p class="badge badge-warning">⏳ 上传中...</p>';
+
+    fetch('/api/files/upload', {
+        method: 'POST',
+        body: formData
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            statusDiv.innerHTML = '<p class="badge badge-success">✅ 上传成功</p>';
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            statusDiv.innerHTML = '<p class="badge badge-error">❌ ' + data.error + '</p>';
+        }
+    })
+    .catch(err => {
+        statusDiv.innerHTML = '<p class="badge badge-error">❌ 上传失败</p>';
+    });
+
+    // Clear input
+    input.value = '';
+}
+
+function viewFile(path) {
+    alert('查看文件: ' + path);
+    // In a real implementation, this would open the file
+}
+
+// Auto-hide status after 5 seconds
+setTimeout(() => {
+    const statusDiv = document.getElementById('upload-status');
+    if (statusDiv) {
+        setTimeout(() => { statusDiv.style.display = 'none'; }, 5000);
+    }
+}, 1000);
+</script>
+{% endblock %}

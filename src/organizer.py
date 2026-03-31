@@ -36,6 +36,7 @@ class InvoiceOrganizer:
         InvoiceType.TRAIN: "交通",
         InvoiceType.TAXI: "交通",
         InvoiceType.HOTEL: "住宿",
+        InvoiceType.BILL: "住宿",  # Bills go to hotel category
         InvoiceType.DINING: "餐饮",
         InvoiceType.CAR_RENTAL: "其他",
         InvoiceType.OTHER: "其他",

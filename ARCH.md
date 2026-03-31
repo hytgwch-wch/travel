@@ -7,12 +7,30 @@
 │                          出差发票自动整理系统                                │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  百度网盘云端 │ ──▶ │   bypy_sync  │ ──▶ │  temp/       │ ──▶ │  ocr_engine  │
-│ /apps/bypy/  │     │   模块        │     │  临时目录     │     │  PaddleOCR   │
-└──────────────┘     └──────────────┘     └──────────────┘     └──────────────┘
-                                                              │
-                                                              ▼
+    ┌──────────────┐                       ┌──────────────┐
+    │  邮箱云端    │                       │  百度网盘云端 │
+    │  (IMAP)      │                       │  (bypy)      │
+    └──────┬───────┘                       └──────┬───────┘
+           │                                      │
+           ▼                                      ▼
+    ┌──────────────┐                     ┌──────────────┐
+    │ email_sync   │                     │ bypy_sync    │
+    │ 模块(默认)    │                     │ 模块(可选)    │
+    └──────┬───────┘                     └──────┬───────┘
+           │                                      │
+           └──────────────┬───────────────────────┘
+                          ▼
+                 ┌──────────────┐
+                 │  temp/       │
+                 │  临时目录     │
+                 └──────┬───────┘
+                        ▼
+                 ┌──────────────┐
+                 │  ocr_engine  │
+                 │  PaddleOCR   │
+                 └──────┬───────┘
+                        │
+                        ▼
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐ ┌──────────────┐
 │  invoices/   │ ◀─  │  organizer   │ ◀─  │   parser     │ │              │
 │  本地整理目录 │     │   文件组织    │     │   信息解析    │ │   renamer    │
@@ -27,7 +45,58 @@
 
 ## 2. 模块设计
 
-### 2.1 bypy_sync.py - 百度网盘同步模块
+### 2.1 email_sync.py - 邮箱同步模块 (默认)
+
+**职责**：使用 IMAP 协议从邮箱下载发票附件
+
+**接口定义**：
+```python
+class EmailSyncManager:
+    """邮箱同步管理器（基于 IMAP）"""
+
+    def connect(self) -> bool:
+        """连接 IMAP 服务器"""
+
+    def list_emails(self, since_date: datetime, limit: int) -> List[EmailMeta]:
+        """列出邮件"""
+
+    def sync_new_files(self, known_files: Set[str]) -> List[str]:
+        """
+        同步新增邮件附件
+
+        Args:
+            known_files: 已知邮件 UID 集合
+
+        Returns:
+            List[str]: 新下载的本地文件路径列表
+        """
+```
+
+**数据结构**：
+```python
+@dataclass
+class EmailMeta:
+    uid: str                    # IMAP UID (唯一标识)
+    subject: str
+    sender: str
+    sender_name: str
+    date: datetime
+    has_attachment: bool
+    message_id: str
+
+@dataclass
+class AttachmentMeta:
+    filename: str
+    content_type: str
+    size: int
+```
+
+**过滤规则**：
+- **发件人域名**: @ctrip.com, @ceair.com, @marriott.com, @didiglobal.com 等
+- **主题关键词**: 行程单、订单、发票、预订、差旅
+- **附件类型**: .pdf, .jpg, .png, .bmp
+
+### 2.1b bypy_sync.py - 百度网盘同步模块 (可选)
 
 **职责**：封装 bypy 操作，负责远程文件列表获取和文件下载
 

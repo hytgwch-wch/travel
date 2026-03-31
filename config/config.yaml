@@ -1,6 +1,6 @@
 # 出差发票自动整理系统 - 主配置文件
 
-# 百度网盘配置（bypy）
+# 百度网盘配置（bypy）- 已废弃，改用邮箱配置
 baidu_pan:
   # 远程目录（相对于 /apps/bypy/）
   remote_dir: "invoices"
@@ -8,6 +8,133 @@ baidu_pan:
   temp_dir: "temp"
   # 下载后自动处理
   process_after_download: true
+
+# 邮箱配置（IMAP）
+email:
+  # IMAP 服务器设置
+  imap_server: "imap.zju.edu.cn"
+  imap_port: 993
+  mailbox: "INBOX"
+
+  # 认证信息
+  email_address: "hytgwch@zju.edu.cn"
+  authorization_code: "4sckTpq4GBxueJ2u"
+
+  # 同步设置
+  temp_dir: "temp"
+  check_days: 120  # 检查最近120天的邮件
+  max_emails: 200  # 每次最多检索200封邮件
+
+  # 过滤规则 - 发件人关键词（域名或邮箱）
+  sender_keywords:
+    # 实际发票发送域名
+    - "@trip.com"  # 携程（实际发送域名）
+    - "@invoice06.huazhuhotels.com"  # 华住酒店发票
+    - "@info.nuonuo.com"  # 诺诺餐饮发票
+    - "@invoice.com"  # 通用发票发送邮箱后缀
+
+    # 航空公司
+    - "@ceair.com"  # 中国东方航空
+    - "@airchina.com"  # 中国国际航空
+    - "@csair.com"  # 中国南方航空
+    - "@hnair.com"  # 海南航空
+    - "@shandongair.com"  # 山东航空
+    - "@xiamenair.com"  # 厦门航空
+    - "@springairlines.com"  # 春秋航空
+    - "@chengduair.com"  # 成都航空
+    - "@shenzhenair.com"  # 深圳航空
+    - "@loongair.cn"  # 长龙航空
+
+    # OTA 平台
+    - "@ctrip.com"  # 携程
+    - "@ctrip.com.hk"  # 携程香港
+    - "@qunar.com"  # 去哪儿
+    - "@fliggy.com"  # 飞猪（阿里）
+    - "@ly.com"  # 同程艺龙
+    - "@meituan.com"  # 美团
+    - "@dianping.com"  # 大众点评
+
+    # 酒店集团
+    - "@marriott.com"  # 万豪
+    - "@marriott.com.cn"  # 万豪中国
+    - "@ihg.com"  # 洲际
+    - "@accor.com"  # 雅高
+    - "@huazhu.com"  # 华住
+    - "@homeinns.com"  # 如家
+    - "@jinjiang.com"  # 锦江
+    - "@btg-hotels.com"  # 首旅如家
+    - "@wyndhamhotels.com"  # 温德姆
+    - "@hilton.com"  # 希尔顿
+    - "@hyatt.com"  # 凯悦
+    - "@shangri-la.com"  # 香格里拉
+
+    # 酒店预订平台
+    - "@booking.com"  # Booking.com
+    - "@agoda.com"  # Agoda
+    - "@ctrip.com"  # 携程酒店
+
+    # 打车/租车平台
+    - "@didiglobal.com"  # 滴滴
+    - "@didi.com"  # 滴滴中国
+    - "@xiaojukeji.com"  # 小桔科技
+    - "@shouqiev.com"  # 首汽约车
+    - "@10100.com"  # 神州专车
+    - "@caocaozhuanche.com"  # 曹操出行
+    - "@t3go.com.cn"  # T3出行
+    - "@heytaxi.com"  # 嘟嘟出租车
+    - "@aikakaev.com"  # 哈啰出行
+
+    # 火车票平台
+    - "@kyfw.12306.cn"  # 12306 官方
+    - "@12306.com"  # 12306
+    - "@trip.com"  # 携程火车票
+
+    # 租车平台
+    - "@zuchechina.com"  # 神州租车
+    - "@hi-zc.com"  # 一嗨租车
+
+    # 企业差旅
+    - "@e-travel.com"  # 企业差旅
+    - "@china-etravel.com"  # 中国差旅
+    - "@ctrip.biz"  # 携程商旅
+
+    # 浙大相关 - 已移除，避免内部通知
+    # 如需浙大发票，主题中会包含"发票"等关键词
+
+  # 过滤规则 - 邮件主题关键词
+  subject_keywords:
+    - "行程单"
+    - "订单"
+    - "预订"
+    - "确认"
+    - "发票"
+    - "住宿"
+    - "机票"
+    - "火车"
+    - "接送"
+    - "用车"
+    - "差旅"
+    - "出行"
+    - "报销"
+    - "电子客票"
+    - "预订成功"
+    - "出票"
+
+  # 允许的附件扩展名
+  attachment_extensions:
+    - ".pdf"
+    - ".jpg"
+    - ".jpeg"
+    - ".png"
+    - ".bmp"
+    - ".tiff"
+    - ".zip"    # 压缩包，下载后会自动解压
+    - ".rar"
+    - ".7z"
+
+  # 处理选项
+  mark_as_read: true  # 下载后标记为已读
+  delete_after_download: false  # 下载后删除邮件（不推荐）
 
 # 本地整理目录（输出）
 local_output_dir: "invoices"
