@@ -214,8 +214,25 @@ class TaskScheduler:
         path = Path(file_path)
         logger.info(f"\nProcessing: {path.name}")
 
-        # Check if already processed
-        if self.db.is_processed(path.name):
+        # Check if already processed - use email_uid + filename if available
+        is_processed = False
+        if hasattr(self.sync_manager, 'downloaded_files_meta'):
+            # Check if this file has email metadata
+            email_meta = self.sync_manager.downloaded_files_meta.get(file_path)
+            if not email_meta:
+                email_meta = self.sync_manager.downloaded_files_meta.get(file_path.replace('\\', '/'))
+
+            if email_meta:
+                # Use email_uid + filename combination for accurate check
+                is_processed = self.db.is_processed_by_email(str(email_meta.uid), path.name)
+            else:
+                # Fallback to filename-only check for non-email files
+                is_processed = self.db.is_processed(path.name)
+        else:
+            # No email metadata available, use filename check
+            is_processed = self.db.is_processed(path.name)
+
+        if is_processed:
             logger.info(f"Already processed, skipping: {path.name}")
             result.skipped += 1
             return

@@ -122,12 +122,68 @@ function formatFileSize(bytes) {
 
 function generateTripForm(tripPath) {
     if (!confirm('确定要为该行程生成报销单吗？')) return;
-    alert('报销单生成功能需要后端支持');
+
+    const btn = event.target;
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ 生成中...';
+    btn.disabled = true;
+
+    fetch(`/api/forms/generate/${tripPath}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(resp => resp.json())
+    .then(data => {
+        if (data.success) {
+            alert('✅ ' + data.message);
+            // Optionally download the form
+            if (data.download_url) {
+                window.open(data.download_url, '_blank');
+            }
+        } else {
+            alert('❌ ' + data.error);
+        }
+    })
+    .catch(err => {
+        alert('❌ 生成失败: ' + err);
+    })
+    .finally(() => {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    });
 }
 
 function generateAllForms() {
-    if (!confirm('确定要为所有行程生成报销单吗？')) return;
-    alert('批量生成功能开发中...');
+    if (!confirm('确定要为所有行程生成报销单吗？这可能需要一些时间。')) return;
+
+    const btn = event.target;
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ 批量生成中...';
+    btn.disabled = true;
+
+    fetch('/api/forms/generate-all', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(resp => resp.json())
+    .then(data => {
+        if (data.success) {
+            alert('✅ ' + data.message);
+        } else {
+            alert('❌ ' + data.error);
+        }
+    })
+    .catch(err => {
+        alert('❌ 生成失败: ' + err);
+    })
+    .finally(() => {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    });
 }
 
 // Close modal on outside click

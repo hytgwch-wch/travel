@@ -227,6 +227,27 @@ class RecordDatabase:
         )
         return cursor.fetchone() is not None
 
+    def is_processed_by_email(self, email_uid: str, attachment_name: str) -> bool:
+        """
+        Check if an email attachment has been processed.
+
+        Uses email_uid + attachment_name combination to avoid false positives
+        when different emails use the same attachment filename.
+
+        Args:
+            email_uid: IMAP email UID
+            attachment_name: Attachment filename
+
+        Returns:
+            bool: True if this specific attachment from this email has been processed
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM processed_files WHERE email_uid = ? AND (remote_path = ? OR attachment_name = ?) LIMIT 1",
+            (email_uid, attachment_name, attachment_name)
+        )
+        return cursor.fetchone() is not None
+
     def add_record(self, record: ProcessedRecord) -> int:
         """
         Add a processed file record.

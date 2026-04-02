@@ -844,25 +844,21 @@ class EmailSyncManager:
                 path_obj = Path(file_path)
                 filename = path_obj.name
 
-                # Try multiple variations of the path for checking
-                check_paths = [filename]  # Just the filename
+                # Get email metadata for this file
+                email_meta = self.downloaded_files_meta.get(str(file_path))
 
-                # If file is in a subdirectory, also check relative path
-                if path_obj.is_relative_to(self.temp_dir):
-                    check_paths.append(str(path_obj.relative_to(self.temp_dir)))
-
-                # Also try without unique suffix (_1, _2, etc.)
-                if any(f'_{i}' in path_obj.stem for i in range(1, 10)):
-                    base_stem = path_obj.stem.rsplit('_', 1)[0] if '_' in path_obj.stem else path_obj.stem
-                    check_paths.append(base_stem + path_obj.suffix)
-
-                # Check if any of these paths was processed
-                is_processed = any(db.is_processed(p) for p in check_paths)
+                # Check using email_uid + filename combination (more accurate)
+                is_processed = False
+                if email_meta:
+                    is_processed = db.is_processed_by_email(str(email_meta.uid), filename)
+                else:
+                    # Fallback to old method for non-email files
+                    is_processed = db.is_processed(filename)
 
                 if not is_processed:
                     filtered_files.append(file_path)
                 else:
-                    logger.debug(f"Skipping already processed file: {filename}")
+                    logger.debug(f"Skipping already processed file: {filename} (from email {email_meta.uid if email_meta else 'unknown'})")
                     # Remove the file metadata since we're not returning it
                     self.downloaded_files_meta.pop(file_path, None)
                     # Delete the file from disk as well

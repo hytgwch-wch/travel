@@ -29,6 +29,14 @@ from src.config import get_config
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
 
+# Disable caching for development
+@app.after_request
+def add_header(response):
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
 # Configuration
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 UPLOAD_FOLDER = Path('temp')
@@ -103,8 +111,7 @@ def api_generate_trips():
     try:
         from src.trip_grouper import TripGrouper
         grouper = TripGrouper()
-        trips = grouper.group_by_trip()
-        grouper.generate_trip_directories(trips)
+        trips = grouper.generate_trip_directories("trips")
         return jsonify({
             'success': True,
             'trip_count': len(trips)
@@ -590,6 +597,103 @@ def api_smart_report():
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============================================
+# Reimbursement Form API
+# ============================================
+
+@app.route('/api/forms/generate/<path:trip_path>', methods=['POST'])
+def api_generate_form(trip_path):
+    """Generate reimbursement form for a specific trip."""
+    from fill_reimbursement_template import fill_template_with_trip_info, InvoiceInfo
+    from pathlib import Path
+
+    try:
+        # Use absolute path from project root
+        project_root = Path(__file__).parent.parent
+        trip_dir = project_root / 'trips' / trip_path
+
+        if not trip_dir.exists():
+            return jsonify({'success': False, 'error': f'Trip not found: {trip_dir}'}), 404
+
+        # Find template
+        template_path = project_root / 'trips/报销单.docx'
+        if not template_path.exists():
+            template_path = project_root / 'trips/报销单.doc'
+
+        if not template_path.exists():
+            return jsonify({'success': False, 'error': 'Template file not found'}), 404
+
+        # Read invoices from trip directory
+        invoices = []
+        for pdf_file in trip_dir.glob('*.pdf'):
+            inv_info = InvoiceInfo.from_filename(pdf_file.name)
+            if inv_info:
+                invoices.append(inv_info)
+
+        if not invoices:
+            return jsonify({'success': False, 'error': 'No invoices found in trip'}), 400
+
+        # Generate form
+        fill_template_with_trip_info(template_path, trip_dir, invoices)
+
+        # Determine output filename
+        output_file = trip_dir / '差旅费报销单.doc'
+        if not output_file.exists():
+            output_file = trip_dir / '差旅费报销单.docx'
+
+        return jsonify({
+            'success': True,
+            'message': f'报销单已生成: {output_file.name}',
+            'download_url': f'/api/forms/download?path={trip_path}/{output_file.name}'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/forms/generate-all', methods=['POST'])
+def api_generate_all_forms():
+    """Generate reimbursement forms for all trips."""
+    from fill_reimbursement_template import generate_all_forms
+    from pathlib import Path
+
+    try:
+        project_root = Path(__file__).parent.parent
+        template_path = project_root / 'trips/报销单.docx'
+
+        if not template_path.exists():
+            template_path = project_root / 'trips/报销单.doc'
+
+        if not template_path.exists():
+            return jsonify({'success': False, 'error': 'Template file not found'}), 404
+
+        generate_all_forms(str(template_path), str(project_root / 'trips'))
+
+        return jsonify({
+            'success': True,
+            'message': '所有行程的报销单已生成'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/forms/download')
+def api_download_form():
+    """Download generated reimbursement form."""
+    from flask import send_file
+    from pathlib import Path
+
+    file_path = request.args.get('path')
+    if not file_path:
+        return jsonify({'error': 'No file specified'}), 400
+
+    project_root = Path(__file__).parent.parent
+    full_path = project_root / 'trips' / file_path
+    if not full_path.exists():
+        return jsonify({'error': f'File not found: {full_path}'}), 404
+
+    return send_file(str(full_path), as_attachment=True, download_name=full_path.name)
 
 
 # ============================================
