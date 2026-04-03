@@ -125,7 +125,8 @@
 {% endblock %}
 
 {% block scripts %}
-<scriptdocument.addEventListener('DOMContentLoaded', function() {
+<script>
+document.addEventListener('DOMContentLoaded', function() {
     // Load current configuration
     fetch('/api/config')
         .then(r => r.json())
