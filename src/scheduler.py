@@ -362,7 +362,13 @@ class TaskScheduler:
 
         # Handle conflicts
         target_dir = self.organizer.get_target_path(info)
-        new_filename = self.renamer.make_unique(new_filename, target_dir)
+        new_filename = self.renamer.make_unique(new_filename, target_dir, source_path=path)
+
+        if new_filename is None:
+            # Identical file already exists, skip processing
+            logger.info(f"  -> Skipping: identical file already exists")
+            result.skipped = getattr(result, 'skipped', 0) + 1
+            return result
 
         logger.info(f"  -> New filename: {new_filename}")
 

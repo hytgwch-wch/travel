@@ -30,6 +30,7 @@ class Invoice:
     amount: float = 0.0
     traveler: str = ""
     document_type: str = ""  # 行程单, 发票, or empty
+    is_refund: bool = False  # True for 退票费 (refund/cancellation fee)
 
     def __str__(self) -> str:
         return f"{self.date} {self.invoice_type} {self.origin or ''}->{self.destination or ''} {self.traveler}"
@@ -182,6 +183,9 @@ class Invoice:
                 if invoice_type == "结账单":
                     invoice_type = "住宿"
 
+            # Detect refund/cancellation fee
+            is_refund = "退票费" in name
+
             return cls(
                 filename=filepath.name,
                 filepath=filepath,
@@ -191,7 +195,8 @@ class Invoice:
                 destination=destination,
                 amount=amount,
                 traveler=traveler,
-                document_type=doc_type
+                document_type=doc_type,
+                is_refund=is_refund
             )
 
         except Exception as e:
@@ -251,6 +256,12 @@ class TripGrouper:
         "丹阳": "江苏", "溧水": "江苏", "徐州": "江苏",
         # Beijing
         "北京": "北京", "首都国际机场": "北京",
+        # Sichuan Province
+        "成都": "四川",
+        # Hunan Province
+        "长沙": "湖南",
+        # Guangdong Province
+        "广州": "广东", "深圳": "广东", "珠海": "广东", "东莞": "广东",
         # Liaoning Province
         "大连": "辽宁", "沈阳": "辽宁", "鞍山": "辽宁",
         # Heilongjiang Province
@@ -346,10 +357,16 @@ class TripGrouper:
         # Split by common separators and check each part
         if '_' in city:
             parts = city.split('_')
+            candidates = []
             for part in parts:
                 normalized = self._normalize_city(part)
-                if normalized and normalized != self.HOME_CITY:
-                    return normalized
+                if normalized:
+                    candidates.append(normalized)
+            # Prefer known cities (in PROVINCE_MAP) over unrecognized strings
+            for c in candidates:
+                if c in self.PROVINCE_MAP:
+                    return c
+            return candidates[0] if candidates else None
 
         # Remove train station suffixes (东, 南, 西, 北)
         # But be careful not to remove actual city names
@@ -367,6 +384,7 @@ class TripGrouper:
             "首都国际机场": "北京",
             "萧山国际机场": "杭州",
             "浦东国际机场": "上海",
+            "天府国际机场": "成都",
         }
 
         # Check direct aliases
@@ -560,9 +578,11 @@ class TripGrouper:
             List of Trip objects
         """
         # 1. Separate journey invoices from support invoices
+        # Refund invoices (退票费) go to support_invoices to avoid acting as route nodes
         journey_invoices = [inv for inv in invoices
                             if inv.invoice_type in ['机票', '火车']
-                            and inv.origin and inv.destination]
+                            and inv.origin and inv.destination
+                            and not inv.is_refund]
         support_invoices = [inv for inv in invoices
                             if inv not in journey_invoices]
 
@@ -813,7 +833,11 @@ class TripGrouper:
         relevant_cities = set(cities_set)
         relevant_cities.add(self.HOME_CITY)  # Home city is always relevant
 
-        for inv in support_invoices:
+        # Sort support invoices: route-having invoices first, so siblings can match them
+        sorted_support = sorted(support_invoices,
+                                key=lambda inv: 0 if (inv.origin or inv.destination) else 1)
+
+        for inv in sorted_support:
             # Skip if already used in another trip
             if inv in trip_invoices:
                 continue
@@ -826,25 +850,37 @@ class TripGrouper:
             # Only include if the invoice is related to trip cities or dates
             is_geographically_relevant = False
 
-            if inv.invoice_type in ["接送机", "打车"]:
-                # For transfers and taxi, match by date proximity to journeys
-                # OR by geographic relevance if route info is available
+            if inv.invoice_type == "接送机":
+                # For airport transfers, match by geographic relevance
                 origin_city = self._normalize_city(inv.origin) if inv.origin else None
                 dest_city = self._normalize_city(inv.destination) if inv.destination else None
 
-                # First, try geographic matching if route info is available
+                # Geographic match: route city must be in trip's relevant cities
                 if origin_city and origin_city in relevant_cities:
                     is_geographically_relevant = True
                 elif dest_city and dest_city in relevant_cities:
                     is_geographically_relevant = True
-                else:
-                    # No route info or no geographic match - try date matching
-                    # Match if within 1 day of any journey in this trip
-                    for journey in chain:
-                        date_diff = abs((inv.date - journey.date).days)
-                        if date_diff <= 1:
+                elif not origin_city and not dest_city:
+                    # No route info - match if a sibling invoice (same date+amount)
+                    # with route info was already included in this trip
+                    for matched_inv in trip_invoices:
+                        if (matched_inv.invoice_type == inv.invoice_type
+                                and matched_inv.date == inv.date
+                                and abs(matched_inv.amount - inv.amount) < 0.01
+                                and (matched_inv.origin or matched_inv.destination)):
                             is_geographically_relevant = True
                             break
+
+            elif inv.invoice_type == "打车":
+                # Taxi invoices have no route info, match by date range
+                is_geographically_relevant = True
+
+            elif inv.invoice_type in ["机票", "火车"] and inv.is_refund:
+                # Refund invoices: match by same route or same date as a journey
+                for journey in chain:
+                    if inv.date == journey.date:
+                        is_geographically_relevant = True
+                        break
 
             elif inv.invoice_type in ["住宿", "餐饮", "其他"]:
                 # For hotels/dining/others, be more permissive if within date range

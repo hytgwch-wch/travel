@@ -258,18 +258,20 @@ class InvoiceRenamer:
 
         return filename
 
-    def make_unique(self, base_name: str, output_dir: Path) -> str:
+    def make_unique(self, base_name: str, output_dir: Path, source_path: Path = None) -> Optional[str]:
         """
         Ensure filename is unique in output directory.
 
-        Adds numeric suffix if file already exists.
+        If target file already exists with identical content, returns None (skip).
+        If target file exists with different content, adds numeric suffix.
 
         Args:
             base_name: Proposed filename
             output_dir: Output directory path
+            source_path: Source file path for content comparison
 
         Returns:
-            str: Unique filename
+            str: Unique filename, or None if identical file already exists
         """
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -289,21 +291,45 @@ class InvoiceRenamer:
         if not target_path.exists():
             return full_name
 
-        # Add numeric suffix
+        # File exists - check if content is identical
+        if source_path and source_path.exists():
+            if self._files_identical(source_path, target_path):
+                logger.info(f"Identical file already exists, skipping: {full_name}")
+                return None
+
+        # Different content - add numeric suffix
         counter = 1
         while True:
             new_name = f"{name_base}_{counter}"
             if ext:
                 new_name = f"{new_name}.{ext}"
 
-            if not (output_dir / new_name).exists():
+            candidate = output_dir / new_name
+            if not candidate.exists():
                 logger.info(f"File exists, using unique name: {new_name}")
                 return new_name
 
+            # Also check if this _N file has identical content
+            if source_path and source_path.exists():
+                if self._files_identical(source_path, candidate):
+                    logger.info(f"Identical file already exists as: {new_name}")
+                    return None
+
             counter += 1
             if counter > 1000:
-                # Safety limit
                 raise RuntimeError(f"Too many file conflicts for: {base_name}")
+
+    def _files_identical(self, path1: Path, path2: Path) -> bool:
+        """Check if two files have identical content by size then MD5 hash."""
+        try:
+            if path1.stat().st_size != path2.stat().st_size:
+                return False
+            import hashlib
+            h1 = hashlib.md5(path1.read_bytes()).hexdigest()
+            h2 = hashlib.md5(path2.read_bytes()).hexdigest()
+            return h1 == h2
+        except Exception:
+            return False
 
     def get_extension(self, file_path: str) -> str:
         """
