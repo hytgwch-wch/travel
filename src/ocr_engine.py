@@ -17,9 +17,13 @@ from loguru import logger
 
 from .config import get_config
 
-# Disable oneDNN to avoid compatibility issues on Windows
-os.environ['FLAGS_use_mkldnn'] = '0'
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
+# PaddleOCR 3.x on Windows CPU: skip model-host connectivity check (faster startup)
+os.environ.setdefault('PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK', 'True')
+# oneDNN is disabled at init via enable_mkldnn=False — works around a
+# PaddlePaddle 3.3 PIR->oneDNN NotImplementedError on Windows. The legacy
+# FLAGS_use_mkldnn is kept as a belt-and-braces measure.
+os.environ.setdefault('FLAGS_use_mkldnn', '0')
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
 
 # Try to import PDF processing library
 try:
@@ -82,10 +86,14 @@ class OCREngine:
         if self._ocr is None:
             logger.debug("Initializing PaddleOCR...")
             try:
-                # Basic config - only use supported parameters
+                # PaddleOCR 3.x API: `use_angle_cls` was renamed to
+                # `use_textline_orientation`. `enable_mkldnn=False` works
+                # around a PaddlePaddle 3.3 PIR->oneDNN NotImplementedError
+                # on Windows CPU.
                 self._ocr = PaddleOCR(
-                    use_angle_cls=self.use_angle_cls,
+                    use_textline_orientation=self.use_angle_cls,
                     lang=self.lang,
+                    enable_mkldnn=False,
                 )
                 logger.info("PaddleOCR initialized")
             except Exception as e:
@@ -93,8 +101,9 @@ class OCREngine:
                 # Try minimal config
                 try:
                     self._ocr = PaddleOCR(
-                        use_angle_cls=False,
+                        use_textline_orientation=False,
                         lang='ch',
+                        enable_mkldnn=False,
                     )
                     logger.info("PaddleOCR initialized with minimal config")
                 except Exception as e2:
@@ -261,6 +270,10 @@ class OCREngine:
         """
         Process raw PaddleOCR result into OCRResult.
 
+        Supports PaddleOCR 3.x (a list of ``OCRResult`` objects whose
+        ``.json['res']`` dict holds ``rec_texts``/``rec_scores``) and falls
+        back to the legacy 2.x nested-list format ``[[box, (text, conf)]]``.
+
         Args:
             raw_result: Raw result from PaddleOCR
 
@@ -270,34 +283,22 @@ class OCREngine:
         if not raw_result:
             return OCRResult(text="", lines=[], confidence=0.0)
 
-        lines = []
-        confidences = []
-        full_text_parts = []
-
-        # PaddleOCR returns:
-        # [
-        #   [  # Page
-        #     [text_box, (text, confidence)],
-        #     ...
-        #   ]
-        # ]
+        lines: List[str] = []
+        confidences: List[float] = []
+        full_text_parts: List[str] = []
 
         for page in raw_result:
             if not page:
                 continue
 
-            for item in page:
-                if not item or len(item) < 2:
+            # Prefer 3.x dict structure; fall back to 2.x nested list.
+            page_texts, page_scores = self._extract_3x(page)
+            if page_texts is None:
+                page_texts, page_scores = self._extract_2x(page)
+
+            for text, confidence in zip(page_texts, page_scores):
+                if not text:
                     continue
-
-                # item[0] is text box (coordinates), item[1] is (text, confidence)
-                text_info = item[1]
-                if not text_info or len(text_info) < 2:
-                    continue
-
-                text = text_info[0]
-                confidence = text_info[1]
-
                 lines.append(text)
                 confidences.append(confidence)
                 full_text_parts.append(text)
@@ -316,6 +317,46 @@ class OCREngine:
             confidence=avg_confidence,
             raw_data={"raw": raw_result}
         )
+
+    @staticmethod
+    def _extract_3x(page) -> Tuple[Optional[List[str]], List[float]]:
+        """Extract (texts, scores) from a PaddleOCR 3.x OCRResult page."""
+        try:
+            json_data = getattr(page, "json", None)
+            if not isinstance(json_data, dict):
+                json_data = page if isinstance(page, dict) else None
+            if not isinstance(json_data, dict):
+                return None, []
+            res = json_data.get("res", json_data)
+            if not isinstance(res, dict):
+                return None, []
+            texts = res.get("rec_texts") or []
+            if not texts:
+                return None, []
+            scores = list(res.get("rec_scores") or [])
+            if len(scores) < len(texts):
+                scores += [0.0] * (len(texts) - len(scores))
+            return [str(t) for t in texts], [float(s) for s in scores]
+        except Exception:
+            return None, []
+
+    @staticmethod
+    def _extract_2x(page) -> Tuple[List[str], List[float]]:
+        """Extract (texts, scores) from the legacy 2.x nested-list format."""
+        texts: List[str] = []
+        scores: List[float] = []
+        if not isinstance(page, list):
+            return texts, scores
+        for item in page:
+            if not item or len(item) < 2:
+                continue
+            # item[0] is the text box; item[1] is (text, confidence)
+            text_info = item[1]
+            if not text_info or len(text_info) < 2:
+                continue
+            texts.append(str(text_info[0]))
+            scores.append(float(text_info[1]))
+        return texts, scores
 
     def is_supported_format(self, file_path: str) -> bool:
         """

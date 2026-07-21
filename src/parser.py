@@ -584,6 +584,8 @@ class InvoiceParser:
         """Extract hotel stay dates (check-in and check-out)."""
         # Define patterns directly with DOTALL flag for multi-line matching
         pattern_definitions = [
+            # Format: 2026年7月17日入住--2026年7月18日退房 (发票备注，日期在前)
+            r'(\d{4})年(\d{1,2})月(\d{1,2})日\s*入[住房].*?(\d{4})年(\d{1,2})月(\d{1,2})日\s*退[房店]',
             # Format: 入住日期:2026年03月11日  退房日期:2026年03月12日
             r'入住日期[：:]\s*(\d{4})年(\d{1,2})月(\d{1,2})日.*?退房日期[：:]\s*(\d{4})年(\d{1,2})月(\d{1,2})日',
             # Format: 入住日期 2026-02-24 离店日期/离开日期 2026-02-25 (结账单格式，支持换行)
