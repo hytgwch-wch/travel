@@ -1,4 +1,6 @@
-# 出差发票自动整理系统 - 主配置文件
+# 出差发票自动整理系统 - 主配置文件（模板）
+# 复制本文件为 config.yaml 并填入真实信息：copy config\config.yaml.example config\config.yaml
+# config.yaml 已被 .gitignore 忽略，不会提交到版本库。
 
 # 百度网盘配置（bypy）- 已废弃，改用邮箱配置
 baidu_pan:
@@ -16,9 +18,9 @@ email:
   imap_port: 993
   mailbox: "INBOX"
 
-  # 认证信息
-  email_address: "hytgwch@zju.edu.cn"
-  authorization_code: "***REMOVED***"
+  # 认证信息（请替换为你的真实信息）
+  email_address: "your-email@zju.edu.cn"
+  authorization_code: "your-authorization-code"
 
   # 同步设置
   temp_dir: "temp"
@@ -97,9 +99,6 @@ email:
     - "@e-travel.com"  # 企业差旅
     - "@china-etravel.com"  # 中国差旅
     - "@ctrip.biz"  # 携程商旅
-
-    # 浙大相关 - 已移除，避免内部通知
-    # 如需浙大发票，主题中会包含"发票"等关键词
 
   # 过滤规则 - 邮件主题关键词
   subject_keywords:

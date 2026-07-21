@@ -33,6 +33,9 @@ env/
 *~
 
 # Project specific
+# Sensitive config (email IMAP credentials) — never commit
+config/config.yaml
+config/email.yaml
 temp/
 *.log
 logs/
