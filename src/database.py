@@ -47,6 +47,10 @@ class ProcessedRecord:
     email_date: Optional[datetime] = None  # Email date
     attachment_name: Optional[str] = None  # Original attachment filename
 
+    # Buyer (购买方/抬头)
+    buyer_tax_id: Optional[str] = None
+    buyer_company: Optional[str] = None
+
 
 class RecordDatabase:
     """
@@ -132,6 +136,8 @@ class RecordDatabase:
                 email_sender TEXT,
                 email_date TIMESTAMP,
                 attachment_name TEXT,
+                buyer_tax_id TEXT,
+                buyer_company TEXT,
 
                 -- Metadata
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -194,6 +200,8 @@ class RecordDatabase:
             ("email_sender", "TEXT"),
             ("email_date", "TIMESTAMP"),
             ("attachment_name", "TEXT"),
+            ("buyer_tax_id", "TEXT"),
+            ("buyer_company", "TEXT"),
             ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
             ("updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         ]
@@ -276,8 +284,8 @@ class RecordDatabase:
                     processed_at, invoice_type, invoice_date, amount,
                     traveler, status, error_message, raw_ocr_text,
                     source_type, email_uid, email_subject, email_sender,
-                    email_date, attachment_name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    email_date, attachment_name, buyer_tax_id, buyer_company
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 record.remote_path,
                 record.local_path,
@@ -296,7 +304,9 @@ class RecordDatabase:
                 record.email_subject,
                 record.email_sender,
                 email_date,
-                record.attachment_name
+                record.attachment_name,
+                record.buyer_tax_id,
+                record.buyer_company
             ))
             self.conn.commit()
             record_id = cursor.lastrowid
@@ -310,6 +320,7 @@ class RecordDatabase:
                     local_path = ?, final_path = ?, file_hash = ?,
                     processed_at = ?, invoice_type = ?, invoice_date = ?,
                     amount = ?, traveler = ?, status = ?, error_message = ?,
+                    buyer_tax_id = ?, buyer_company = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE remote_path = ?
             """, (
@@ -317,6 +328,7 @@ class RecordDatabase:
                 processed_at or datetime.now().isoformat(),
                 record.invoice_type, record.invoice_date, record.amount,
                 record.traveler, record.status, record.error_message,
+                record.buyer_tax_id, record.buyer_company,
                 record.remote_path
             ))
             self.conn.commit()
@@ -499,6 +511,8 @@ class RecordDatabase:
             email_sender=row["email_sender"] if "email_sender" in keys else None,
             email_date=datetime.fromisoformat(row["email_date"]) if row["email_date"] and "email_date" in keys else None,
             attachment_name=row["attachment_name"] if "attachment_name" in keys else None,
+            buyer_tax_id=row["buyer_tax_id"] if "buyer_tax_id" in keys else None,
+            buyer_company=row["buyer_company"] if "buyer_company" in keys else None,
         )
 
     def is_email_processed(self, email_uid: str, attachment_name: str) -> bool:

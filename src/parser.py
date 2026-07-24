@@ -8,13 +8,23 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from enum import Enum
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from decimal import Decimal
 
 from loguru import logger
 
-from .config import get_parser_config, get_traveler_config
+from .config import get_parser_config, get_traveler_config, get_buyer_config
 from .ocr_engine import OCRResult
+
+# 已知城市集合：用于从酒店销售方名称（如"苏州高新商旅发展有限公司日航酒店分公司"）
+# 中识别城市。仅匹配已知城市，避免把"高新""商旅"等无关字串误判为城市。
+# 与 trip_grouper.PROVINCE_MAP 保持一致；新增目的地时同步追加。
+KNOWN_CITIES: tuple = (
+    "杭州", "宁波", "温州", "嘉兴", "湖州", "绍兴", "金华", "衢州", "舟山", "台州", "丽水",
+    "上海", "南京", "苏州", "无锡", "常州", "镇江", "南通", "泰州", "扬州", "徐州",
+    "北京", "成都", "长沙", "广州", "深圳", "珠海", "东莞",
+    "大连", "沈阳", "哈尔滨", "长春", "青岛", "济南", "烟台", "重庆", "厦门",
+)
 
 
 class InvoiceType(Enum):
@@ -40,6 +50,10 @@ class InvoiceInfo:
 
     # Travel info
     traveler: Optional[str] = None
+
+    # Buyer (购买方/抬头) - identified by tax_id via buyers.yaml
+    buyer_tax_id: Optional[str] = None
+    buyer_company: Optional[str] = None
 
     # Transport specific
     origin: Optional[str] = None
@@ -85,6 +99,7 @@ class InvoiceParser:
         """Initialize parser with configuration."""
         self.parser_config = get_parser_config()
         self.traveler_config = get_traveler_config()
+        self.buyer_config = get_buyer_config()
 
         # Compile regex patterns from config
         self._patterns = self._compile_patterns()
@@ -107,6 +122,37 @@ class InvoiceParser:
 
         return patterns
 
+    def _extract_buyer(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Identify buyer (购买方/抬头) from OCR text.
+
+        Strategy: match a configured tax id (统一社会信用代码) first — it is
+        alphanumeric and OCR'd far more reliably than Chinese names. If no tax
+        id matches (OCR sometimes drops a digit), fall back to matching the
+        configured full company name.
+
+        Args:
+            text: Full OCR text
+
+        Returns:
+            (buyer_tax_id, buyer_company_full_name), or (None, None) if
+            neither a tax id nor a company name is recognized.
+        """
+        if not text:
+            return None, None
+        text_upper = text.upper()
+        # Primary: tax id (统一社会信用代码) — OCR usually clean on the fixed
+        # 18-char alphanumeric code.
+        for tax_id in self.buyer_config.get_all_tax_ids():
+            if tax_id in text_upper:
+                return tax_id, self.buyer_config.get_full_name(tax_id)
+        # Fallback: full company name — rescues cases where OCR corrupted the
+        # tax id (e.g. 浙大 12100000470095016Q misread as 12000000470095016Q).
+        tax_id_by_name = self.buyer_config.find_taxid_by_name(text)
+        if tax_id_by_name:
+            return tax_id_by_name, self.buyer_config.get_full_name(tax_id_by_name)
+        return None, None
+
     def parse(self, ocr_result: OCRResult, raw_filename: Optional[str] = None) -> InvoiceInfo:
         """
         Parse invoice information from OCR result.
@@ -128,12 +174,25 @@ class InvoiceParser:
         invoice_date = self._extract_date(text)
         amount = self._extract_amount(text)
         traveler = self._extract_traveler(text)
+        buyer_tax_id, buyer_company = self._extract_buyer(text)
 
-        # Normalize traveler name
+        # Resolve traveler name.
+        # - Real (known) name extracted -> normalize and keep.
+        # - Else, if buyer has default_traveler (e.g. 星辰基石 -> 王春晖), use it;
+        #   this also overrides false extractions like "经济舱" for that buyer.
+        # - Else fall back to the global default traveler.
+        known_travelers = set(self.traveler_config.get_all_travelers())
+        buyer_default_traveler = self.buyer_config.get_default_traveler(buyer_tax_id)
         if traveler:
-            traveler = self.traveler_config.normalize_name(traveler)
+            normalized = self.traveler_config.normalize_name(traveler)
+            if normalized in known_travelers:
+                traveler = normalized
+            elif buyer_default_traveler:
+                traveler = buyer_default_traveler
+            else:
+                traveler = normalized
         else:
-            traveler = self.traveler_config.default
+            traveler = buyer_default_traveler or self.traveler_config.default
 
         # Create base info
         info = InvoiceInfo(
@@ -141,6 +200,8 @@ class InvoiceParser:
             date=invoice_date,
             amount=amount,
             traveler=traveler,
+            buyer_tax_id=buyer_tax_id,
+            buyer_company=buyer_company,
             raw_name=raw_filename,
             confidence=ocr_result.confidence
         )
@@ -542,6 +603,7 @@ class InvoiceParser:
         patterns = self._patterns.get("hotel_info", [])
 
         city = self._extract_city(text)
+        hotel_name = None
 
         for pattern in patterns:
             match = pattern.search(text)
@@ -550,11 +612,23 @@ class InvoiceParser:
                     hotel_name = match.group(1).strip()
                     # Clean up common suffixes
                     hotel_name = re.sub(r'[酒店宾馆有限公司]+$', '', hotel_name)
-                    return city, hotel_name
+                    break
                 except IndexError:
                     continue
 
-        return city, None
+        # 销售方名称常含城市前缀但无"市"字（如"苏州高新商旅...日航酒店分公司"），
+        # _extract_city 取不到时，回退到已知城市集合扫描（优先扫酒店名，再扫全文）。
+        if not city:
+            city = self._scan_known_city(hotel_name or text)
+
+        return city, hotel_name
+
+    def _scan_known_city(self, text: str) -> Optional[str]:
+        """在文本中查找已知城市（按长度降序，优先长名匹配，避免"杭州南"误命中"杭州"之外的歧义）。"""
+        for city in sorted(KNOWN_CITIES, key=len, reverse=True):
+            if city in text:
+                return city
+        return None
 
     def _extract_stay_days(self, text: str) -> Optional[int]:
         """Extract number of stay days from text."""
@@ -594,9 +668,18 @@ class InvoiceParser:
             r'(\d{4})\.(\d{1,2})\.(\d{1,2})\s*[-\-~到至]\s*(\d{4})\.(\d{1,2})\.(\d{1,2})',
             # Format: 2026-03-11至2026-03-12
             r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s*[-\-~到至]\s*(\d{4})[-/](\d{1,2})[-/](\d{1,2})',
+            # Format: 备注栏无年份 "6月30日入住，7月1日离店" (年份从开票日期推断，跨年则离店年+1)
+            r'(\d{1,2})月(\d{1,2})日\s*入[住店房].*?(\d{1,2})月(\d{1,2})日\s*离[店房开退]',
         ]
 
-        for pattern_str in pattern_definitions:
+        # 推断年份（用于无年份的备注格式）：优先开票日期，其次文本中首个年份
+        def _infer_year():
+            m = re.search(r'开票日期[：:]\s*(\d{4})', text)
+            if not m:
+                m = re.search(r'(\d{4})年', text)
+            return int(m.group(1)) if m else None
+
+        for idx, pattern_str in enumerate(pattern_definitions):
             pattern = re.compile(pattern_str, re.DOTALL)
             match = pattern.search(text)
             if match:
@@ -609,6 +692,21 @@ class InvoiceParser:
                         check_in = datetime.strptime(f"{year1}-{month1.zfill(2)}-{day1.zfill(2)}", "%Y-%m-%d").date()
                         check_out = datetime.strptime(f"{year2}-{month2.zfill(2)}-{day2.zfill(2)}", "%Y-%m-%d").date()
                         logger.info(f"Extracted stay dates: {check_in} to {check_out}")
+                        return check_in, check_out
+                    elif len(groups) >= 4 and idx == len(pattern_definitions) - 1:
+                        # 无年份备注格式：M月D日入住，N月E日离店
+                        m_in, d_in, m_out, d_out = groups[0], groups[1], groups[2], groups[3]
+                        year = _infer_year()
+                        if not year:
+                            continue
+                        month_in, day_in = int(m_in), int(d_in)
+                        month_out, day_out = int(m_out), int(d_out)
+                        year_out = year + 1 if month_out < month_in else year
+                        check_in = datetime.strptime(f"{year}-{month_in:02d}-{day_in:02d}", "%Y-%m-%d").date()
+                        check_out = datetime.strptime(f"{year_out}-{month_out:02d}-{day_out:02d}", "%Y-%m-%d").date()
+                        if check_out <= check_in:
+                            continue
+                        logger.info(f"Extracted stay dates (no-year remark): {check_in} to {check_out}")
                         return check_in, check_out
                 except (ValueError, IndexError):
                     continue

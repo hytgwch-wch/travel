@@ -423,32 +423,38 @@ def generate_all_forms(template_path: str, trips_base_dir: str = "trips"):
 
     base_dir = Path(trips_base_dir)
 
+    # 非行程归档文件夹（公司层下的市内交通/普通打车/孤儿单据），生成报销单时跳过
+    NON_TRIP_FOLDERS = {"市内交通", "普通打车", "孤儿单据"}
+
     for traveler_dir in base_dir.iterdir():
         if not traveler_dir.is_dir() or traveler_dir.name.startswith('.'):
             continue
 
         print(f"\nProcessing traveler: {traveler_dir.name}")
 
-        for trip_dir in traveler_dir.iterdir():
-            if not trip_dir.is_dir():
+        for company_dir in traveler_dir.iterdir():
+            if not company_dir.is_dir():
                 continue
 
-            # Skip "普通打车" folder
-            if trip_dir.name == "普通打车":
-                continue
+            # 兼容旧的2层结构（无公司层时 company_dir 即行程目录）
+            trip_dirs = []
+            for child in company_dir.iterdir():
+                if child.is_dir() and child.name not in NON_TRIP_FOLDERS:
+                    trip_dirs.append(child)
 
-            print(f"  Processing trip: {trip_dir.name}")
+            for trip_dir in trip_dirs:
+                print(f"  Processing trip: {company_dir.name}/{trip_dir.name}")
 
-            invoices = read_trip_invoices(trip_dir)
+                invoices = read_trip_invoices(trip_dir)
 
-            if not invoices:
-                print(f"    No invoices found, skipping")
-                continue
+                if not invoices:
+                    print(f"    No invoices found, skipping")
+                    continue
 
-            total = sum(inv.amount for inv in invoices)
-            print(f"    Found {len(invoices)} invoices, total: {total:.2f} yuan")
+                total = sum(inv.amount for inv in invoices)
+                print(f"    Found {len(invoices)} invoices, total: {total:.2f} yuan")
 
-            fill_template_with_trip_info(template, trip_dir, invoices)
+                fill_template_with_trip_info(template, trip_dir, invoices)
 
 
 if __name__ == "__main__":

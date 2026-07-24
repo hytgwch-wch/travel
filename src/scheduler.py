@@ -405,6 +405,8 @@ class TaskScheduler:
                 invoice_date=info.date.isoformat() if info.date else None,
                 amount=float(info.amount) if info.amount else None,
                 traveler=info.traveler,
+                buyer_tax_id=info.buyer_tax_id,
+                buyer_company=info.buyer_company,
                 status=ProcessStatus.SUCCESS.value,
                 raw_ocr_text=ocr_result.text[:1000],  # Store first 1000 chars
             )

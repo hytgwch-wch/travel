@@ -312,10 +312,120 @@ class TravelerConfig:
         return list(set(self._traveler_map.values()))
 
 
+class BuyerConfig:
+    """Buyer (发票购买方/抬头) configuration, keyed by tax_id.
+
+    Used to classify invoices by buyer company. Lookup is by tax_id
+    (统一社会信用代码), which OCR recognizes far more reliably than
+    Chinese company names.
+    """
+
+    def __init__(self, config_path: str = "config/buyers.yaml"):
+        """
+        Load buyer configuration.
+
+        Args:
+            config_path: Path to buyers.yaml file
+        """
+        self.config_path = Path(config_path)
+        self._data: Dict[str, Any] = {}
+        self._buyer_map: Dict[str, Dict[str, str]] = {}  # tax_id(upper) -> {full_name, dir_name}
+        self._default: str = "未分类"
+        self._load()
+
+    def _load(self):
+        """Load configuration from YAML file."""
+        if not self.config_path.exists():
+            logger.warning(f"Buyer config not found: {self.config_path}")
+            return
+
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                self._data = yaml.safe_load(f) or {}
+
+            self._default = self._data.get("default", "未分类")
+
+            for buyer in self._data.get("buyers", []):
+                tax_id = (buyer.get("tax_id") or "").strip().upper()
+                if not tax_id:
+                    continue
+                self._buyer_map[tax_id] = {
+                    "full_name": buyer.get("full_name", ""),
+                    "dir_name": buyer.get("dir_name", "") or self._default,
+                    "default_traveler": buyer.get("default_traveler"),
+                }
+
+            logger.info(f"Buyer config loaded: {len(self._buyer_map)} entries")
+        except Exception as e:
+            logger.error(f"Failed to load buyer config: {e}")
+
+    @property
+    def default(self) -> str:
+        """Get default dir name for unrecognized buyers."""
+        return self._default
+
+    def lookup_by_taxid(self, tax_id: str) -> Optional[Dict[str, str]]:
+        """
+        Look up buyer info by tax_id.
+
+        Returns:
+            Dict with 'full_name' and 'dir_name', or None if not found.
+        """
+        if not tax_id:
+            return None
+        return self._buyer_map.get(tax_id.strip().upper())
+
+    def get_dir_name(self, tax_id: str) -> str:
+        """Get directory name for a tax_id (falls back to default)."""
+        info = self.lookup_by_taxid(tax_id)
+        return info["dir_name"] if info else self._default
+
+    def get_full_name(self, tax_id: str) -> Optional[str]:
+        """Get full company name for a tax_id (None if not found)."""
+        info = self.lookup_by_taxid(tax_id)
+        return info["full_name"] if info else None
+
+    def get_default_traveler(self, tax_id: str) -> Optional[str]:
+        """
+        Get the default traveler for a buyer (None if not configured).
+
+        Used when an invoice has no recognizable real traveler name — e.g.
+        星辰基石 flights whose cabin class ("经济舱") gets mis-read as a name.
+        """
+        info = self.lookup_by_taxid(tax_id)
+        return info.get("default_traveler") if info else None
+
+    def get_all_tax_ids(self) -> List[str]:
+        """Get list of all configured tax_ids (upper-cased)."""
+        return list(self._buyer_map.keys())
+
+    def find_taxid_by_name(self, text: str) -> Optional[str]:
+        """
+        Find a buyer whose full_name appears in text. Returns its tax_id.
+
+        Used as a fallback when the tax id itself is OCR-corrupted (e.g. a
+        dropped digit). Returns None if no configured company name is found.
+
+        Args:
+            text: Full OCR text (case-sensitive Chinese match)
+
+        Returns:
+            Matching tax_id (upper-cased) or None
+        """
+        if not text:
+            return None
+        for tax_id, info in self._buyer_map.items():
+            name = info.get("full_name", "")
+            if name and name in text:
+                return tax_id
+        return None
+
+
 # Global configuration instance
 _config: Optional[Config] = None
 _parser_config: Optional[ParserConfig] = None
 _traveler_config: Optional[TravelerConfig] = None
+_buyer_config: Optional[BuyerConfig] = None
 
 
 def get_config(reload: bool = False) -> Config:
@@ -364,6 +474,22 @@ def get_traveler_config(reload: bool = False) -> TravelerConfig:
     if _traveler_config is None or reload:
         _traveler_config = TravelerConfig()
     return _traveler_config
+
+
+def get_buyer_config(reload: bool = False) -> BuyerConfig:
+    """
+    Get global buyer configuration instance.
+
+    Args:
+        reload: Force reload configuration
+
+    Returns:
+        BuyerConfig: Buyer configuration instance
+    """
+    global _buyer_config
+    if _buyer_config is None or reload:
+        _buyer_config = BuyerConfig()
+    return _buyer_config
 
 
 def setup_logging(config: Optional[LoggingConfig] = None):

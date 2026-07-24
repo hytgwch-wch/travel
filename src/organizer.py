@@ -12,7 +12,7 @@ from datetime import date
 from loguru import logger
 
 from .parser import InvoiceInfo, InvoiceType
-from .config import get_config
+from .config import get_config, get_buyer_config
 
 
 class InvoiceOrganizer:
@@ -22,7 +22,7 @@ class InvoiceOrganizer:
     Directory structure:
         invoices/
         ├── {year}/
-        │   ├── {month}/
+        │   ├── {company}/    (购买方公司: 浙大/星辰基石/未分类)
         │   │   ├── 交通/    (机票, 火车, 打车)
         │   │   ├── 住宿/    (酒店)
         │   │   ├── 餐饮/    (餐饮)
@@ -68,8 +68,11 @@ class InvoiceOrganizer:
         # Get category
         category = self.TYPE_CATEGORIES.get(info.type, "其他")
 
-        # Build path: invoices/{year}/{category}/
-        target_path = self.base_dir / str(year) / category
+        # Get buyer (company) directory from tax_id via buyers.yaml
+        buyer_dir = get_buyer_config().get_dir_name(info.buyer_tax_id) if info.buyer_tax_id else "未分类"
+
+        # Build path: invoices/{year}/{company}/{category}/
+        target_path = self.base_dir / str(year) / buyer_dir / category
 
         return target_path
 
@@ -214,11 +217,11 @@ class InvoiceOrganizer:
             if not year_dir.is_dir():
                 continue
 
-            for month_dir in year_dir.iterdir():
-                if not month_dir.is_dir():
+            for company_dir in year_dir.iterdir():
+                if not company_dir.is_dir():
                     continue
 
-                for category_dir in month_dir.iterdir():
+                for category_dir in company_dir.iterdir():
                     if not category_dir.is_dir():
                         continue
 

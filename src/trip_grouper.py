@@ -17,6 +17,24 @@ from datetime import timedelta
 
 from loguru import logger
 
+from .config import get_buyer_config
+
+# 星辰基石：该公司的接送机/打车票不计入单次行程，统一归入"市内交通"。
+# 用税号标识公司；税号源自 config/buyers.yaml。
+INTRA_CITY_COMPANY_TAXID = "91330106MAEXL7CP7K"
+
+# 地理相近、可互通行程的城市集群：归一化到同一 canonical 城市，
+# 避免"飞青岛、烟台回"这类跨相邻城市的往返被割裂成两个行程。
+# canonical -> [成员城市]；成员在 _normalize_city 中被折叠到 canonical。
+CITY_CLUSTERS: dict = {
+    "青岛": ["烟台"],
+}
+_CITY_CLUSTER_LOOKUP: dict = {}
+for _canonical, _members in CITY_CLUSTERS.items():
+    _CITY_CLUSTER_LOOKUP[_canonical] = _canonical
+    for _m in _members:
+        _CITY_CLUSTER_LOOKUP[_m] = _canonical
+
 
 @dataclass
 class Invoice:
@@ -29,6 +47,7 @@ class Invoice:
     destination: Optional[str] = None
     amount: float = 0.0
     traveler: str = ""
+    company_dir: str = ""  # 购买方公司目录名（浙大/星辰基石/未分类），从归档路径解析
     document_type: str = ""  # 行程单, 发票, or empty
     is_refund: bool = False  # True for 退票费 (refund/cancellation fee)
 
@@ -279,6 +298,81 @@ class TripGrouper:
     def __init__(self, invoices_dir: str = "invoices"):
         """Initialize trip grouper."""
         self.invoices_dir = Path(invoices_dir)
+        # 星辰基石默认出行人（用于识别落在"未分类/"目录、无税号的行程单）。
+        # 行程单不含购买方税号，归档时落未分类；若出行人是星辰基石默认出行人，
+        # 则视为星辰基石的服务，一并归入市内交通。
+        self._intra_city_traveler = (
+            get_buyer_config().get_default_traveler(INTRA_CITY_COMPANY_TAXID)
+        )
+
+    def _is_auxiliary_doc(self, inv: "Invoice") -> bool:
+        """住宿辅助凭证（宾客水单、入住凭证等）：非正式发票，不计入行程金额。
+
+        这些凭证与正式电子发票成对存在（同一次住宿），若一并计入会重复
+        计费。通过文件名中的"水单"/"凭证"字样识别。
+        """
+        if inv.invoice_type != "住宿":
+            return False
+        return ("水单" in inv.filename) or ("凭证" in inv.filename)
+
+    def _is_intra_city(self, inv: "Invoice") -> bool:
+        """该发票是否归入"市内交通"（不进入任何单次行程统计）。
+
+        规则：接送机/打车票中，
+          - 公司目录 == "星辰基石"（发票含税号，归档正确）；或
+          - 公司目录 == "未分类"且出行人 == 星辰基石默认出行人（行程单无税号）
+        """
+        if inv.invoice_type not in ("接送机", "打车"):
+            return False
+        if inv.company_dir == "星辰基石":
+            return True
+        if inv.company_dir == "未分类" and self._intra_city_traveler:
+            return inv.traveler == self._intra_city_traveler
+        return False
+
+    def _attributed_company(self, inv: "Invoice") -> str:
+        """发票归属的购买方公司（用于行程/市内交通的公司级目录）。
+
+        未分类发票按规则重新归属：星辰基石的接送机/打车（含配对的行程单）
+        归"星辰基石"；其余未分类保持"未分类"。
+        """
+        if inv.company_dir and inv.company_dir != "未分类":
+            return inv.company_dir
+        if self._is_intra_city(inv):
+            return "星辰基石"
+        return inv.company_dir or "未分类"
+
+    def get_orphans(self) -> List["Invoice"]:
+        """孤儿单据：不属于任何完整行程、也非市内交通、也非辅助凭证的单据。
+
+        典型构成：退票费（不再挂载到行程）、独立住宿（无对应行程的住宿）、
+        以及其它无法形成行程链的票据。需先调用 group_by_trip()。
+        """
+        all_invoices = getattr(self, "_all_invoices", [])
+        if not all_invoices:
+            return []
+
+        attached = set()
+        for trip in getattr(self, "_last_trips", []) or []:
+            for inv in trip.invoices:
+                attached.add(inv.filepath)
+            if trip.departure_transfer:
+                for tinv in trip.departure_transfer.invoices:
+                    attached.add(tinv.filepath)
+            if trip.return_transfer:
+                for tinv in trip.return_transfer.invoices:
+                    attached.add(tinv.filepath)
+
+        orphans = []
+        for inv in all_invoices:
+            if inv.filepath in attached:
+                continue
+            if self._is_intra_city(inv):
+                continue
+            if self._is_auxiliary_doc(inv):
+                continue
+            orphans.append(inv)
+        return orphans
 
     def group_by_trip(self) -> List[Trip]:
         """
@@ -305,6 +399,12 @@ class TripGrouper:
         trip_counter = 1
 
         for traveler, traveler_invoices in by_traveler.items():
+            # 按购买方公司再分组：浙大归浙大、星辰基石归星辰基石，
+            # 绝不出现一趟行程里既有浙大发票又有星辰基石发票的情况。
+            by_company = defaultdict(list)
+            for inv in traveler_invoices:
+                by_company[inv.company_dir or "未分类"].append(inv)
+
             # Sort by date, and prioritize departure from home on same date
             # This ensures Hangzhou->XXX is processed before XXX->YYY on same day
             def sort_key(inv):
@@ -313,32 +413,54 @@ class TripGrouper:
                 priority = 0 if self._is_departure_from_home(inv) else 1
                 return (inv.date, priority)
 
-            traveler_invoices.sort(key=sort_key)
+            for company_invoices in by_company.values():
+                company_invoices.sort(key=sort_key)
 
-            # Find trip segments
-            trips = self._find_trips_for_traveler(traveler, traveler_invoices)
+                # Find trip segments within this (traveler, company) group
+                trips = self._find_trips_for_traveler(traveler, company_invoices)
 
-            for trip in trips:
-                trip.trip_id = f"T{trip_counter:03d}_{traveler}_{trip.start_date.strftime('%Y%m%d')}"
-                trip_counter += 1
-                all_trips.append(trip)
+                for trip in trips:
+                    trip.trip_id = f"T{trip_counter:03d}_{traveler}_{trip.start_date.strftime('%Y%m%d')}"
+                    trip_counter += 1
+                    all_trips.append(trip)
 
+        self._last_trips = all_trips  # 供 get_orphans() 使用
         return all_trips
 
     def _collect_invoices(self) -> List[Invoice]:
-        """Collect all invoice information from filenames."""
+        """Collect all invoice information from filenames (excluding locked/exported)."""
+        from src.export_lock import exported_basenames
+
+        locked = exported_basenames()
         invoices = []
 
         for pdf_file in self.invoices_dir.rglob("*.pdf"):
             inv = Invoice.from_filename(pdf_file)
             # Only add valid invoices with a date
             if inv and inv.date:
+                if inv.filename in locked:
+                    logger.info(f"Skipping exported (locked) invoice: {inv.filename}")
+                    continue
+                # Derive buyer company from archive path invoices/{year}/{company}/{category}/
+                # parents[0]=category, parents[1]=company, parents[2]=year
+                try:
+                    inv.company_dir = pdf_file.parents[1].name
+                except IndexError:
+                    inv.company_dir = ""
                 invoices.append(inv)
 
+        self._all_invoices = invoices
         logger.info(f"Collected {len(invoices)} invoices")
         return invoices
 
     def _normalize_city(self, city: str) -> Optional[str]:
+        """Normalize city, then collapse geo-adjacent cluster members (e.g. 烟台→青岛)."""
+        raw = self._normalize_city_raw(city)
+        if raw is None:
+            return None
+        return _CITY_CLUSTER_LOOKUP.get(raw, raw)
+
+    def _normalize_city_raw(self, city: str) -> Optional[str]:
         """
         Normalize city name for matching.
 
@@ -593,16 +715,22 @@ class TripGrouper:
 
         # 3. Create Trip objects
         trips = []
+        # 跨行程共享：已被挂载的支撑发票路径，避免住宿等被多趟行程重复挂载
+        used_support_paths: set = set()
 
         # Process complete chains
         for i, chain in enumerate(complete_chains):
-            trip = self._create_trip_from_chain(traveler, chain, support_invoices, complete=True)
+            trip = self._create_trip_from_chain(
+                traveler, chain, support_invoices, complete=True,
+                used_support_paths=used_support_paths)
             if trip:
                 trips.append(trip)
 
         # Process orphan/incomplete chains
         for i, chain in enumerate(incomplete_chains):
-            trip = self._create_trip_from_chain(traveler, chain, support_invoices, complete=False)
+            trip = self._create_trip_from_chain(
+                traveler, chain, support_invoices, complete=False,
+                used_support_paths=used_support_paths)
             if trip:
                 trips.append(trip)
 
@@ -778,7 +906,8 @@ class TripGrouper:
         )
 
     def _create_trip_from_chain(self, traveler: str, chain: List[Invoice],
-                               support_invoices: List[Invoice], complete: bool = True) -> Optional[Trip]:
+                               support_invoices: List[Invoice], complete: bool = True,
+                               used_support_paths: Optional[set] = None) -> Optional[Trip]:
         """
         Create Trip from journey chain and match support invoices.
 
@@ -838,6 +967,18 @@ class TripGrouper:
                                 key=lambda inv: 0 if (inv.origin or inv.destination) else 1)
 
         for inv in sorted_support:
+            # 星辰基石的接送机/打车不计入行程，统一归入"市内交通"（见报告）
+            if self._is_intra_city(inv):
+                continue
+
+            # 住宿辅助凭证（水单/入住凭证）不计入行程，避免与配对的正式发票重复计费
+            if self._is_auxiliary_doc(inv):
+                continue
+
+            # 跨行程去重：已被另一趟行程挂载的支撑发票不再重复挂载
+            if used_support_paths is not None and inv.filepath in used_support_paths:
+                continue
+
             # Skip if already used in another trip
             if inv in trip_invoices:
                 continue
@@ -875,23 +1016,18 @@ class TripGrouper:
                 # Taxi invoices have no route info, match by date range
                 is_geographically_relevant = True
 
-            elif inv.invoice_type in ["机票", "火车"] and inv.is_refund:
-                # Refund invoices: match by same route or same date as a journey
-                for journey in chain:
-                    if inv.date == journey.date:
-                        is_geographically_relevant = True
-                        break
+            # 退票费（is_refund）不再挂载到任何行程，统一作为孤儿单列
 
             elif inv.invoice_type in ["住宿", "餐饮", "其他"]:
-                # For hotels/dining/others, be more permissive if within date range
-                # Only include if same day as a journey in this trip
-                for journey in chain:
-                    if inv.date == journey.date:
-                        is_geographically_relevant = True
-                        break
+                # 住宿/餐饮：只要落在行程日期区间内即视为该行程的一部分
+                # （能走到这里说明已通过上方 trip_start..trip_end 日期过滤）
+                # 这样行程内的住宿会正确挂载，只有真正独立、无对应行程的住宿才成为孤儿
+                is_geographically_relevant = True
 
             if is_geographically_relevant:
                 trip_invoices.append(inv)
+                if used_support_paths is not None:
+                    used_support_paths.add(inv.filepath)
 
         # Recalculate end_date based on ALL matched invoices
         if trip_invoices:
@@ -907,6 +1043,37 @@ class TripGrouper:
             invoices=trip_invoices,
             cities=cities if complete else []
         )
+
+    def _clean_non_exported(self, base_dir: Path) -> None:
+        """删除非「已输出」的旧行程 / 孤儿 / 市内交通 / 普通打车 文件夹。
+
+        已输出（锁定）的文件夹予以保留——其发票也已从重新分组中排除，
+        不会重新生成，故物理目录原地保留即为冻结状态。
+        """
+        import shutil
+        from src.export_lock import exported_keys
+
+        if not base_dir.exists():
+            return
+        locked = exported_keys()
+        for traveler_dir in base_dir.iterdir():
+            if not traveler_dir.is_dir() or traveler_dir.name.startswith('.'):
+                continue
+            for company_dir in traveler_dir.iterdir():
+                if not company_dir.is_dir():
+                    continue
+                for child in list(company_dir.iterdir()):
+                    if not child.is_dir():
+                        continue
+                    key = f"{traveler_dir.name}/{company_dir.name}/{child.name}"
+                    if key in locked:
+                        logger.info(f"Preserving exported (locked) folder: {key}")
+                        continue
+                    try:
+                        shutil.rmtree(child)
+                        logger.info(f"Cleaned stale folder: {key}")
+                    except Exception as e:
+                        logger.warning(f"Could not clean {key}: {e}")
 
     def generate_trip_directories(self, output_dir: str = "trips") -> List[Trip]:
         """
@@ -927,6 +1094,11 @@ class TripGrouper:
         trips = self.group_by_trip()
         base_dir = Path(output_dir)
         import shutil
+        from src.summary_sheet import generate_for_folder
+
+        # 清理非「已输出（锁定）」的旧行程/孤儿/市内交通/普通打车 文件夹；
+        # 已输出的予以保留（冻结状态，后续不再变动/处理）。
+        self._clean_non_exported(base_dir)
 
         # Preserve existing non-invoice files in base directory (like 报销单.docx)
         preserved_files = {}
@@ -943,7 +1115,9 @@ class TripGrouper:
             end_str = trip.end_date.strftime('%Y%m%d')
             cities_str = '-'.join(trip.cities) if trip.cities else trip.destination
             trip_dir_name = f"{start_str}_{end_str}_{cities_str}"
-            trip_dir = base_dir / trip.traveler / trip_dir_name
+            # 公司层：trips/{traveler}/{company}/{trip}/，浙大与星辰基石行程物理分开
+            company = self._attributed_company(trip.invoices[0]) if trip.invoices else "未分类"
+            trip_dir = base_dir / trip.traveler / company / trip_dir_name
 
             # Preserve existing non-invoice files in trip directory
             preserved_trip_files = {}
@@ -996,6 +1170,12 @@ class TripGrouper:
                     except Exception as e:
                         logger.error(f"Failed to copy {transfer_inv.filename}: {e}")
 
+            # 生成统计单（.docx）
+            try:
+                generate_for_folder(trip_dir, "trip")
+            except Exception as e:
+                logger.warning(f"统计单生成失败 {trip_dir.name}: {e}")
+
         # Handle unclassified taxi invoices - create "普通打车" folder
         # Track all used invoice filepaths
         used_invoice_paths = set()
@@ -1009,30 +1189,90 @@ class TripGrouper:
                 for transfer_inv in trip.return_transfer.invoices:
                     used_invoice_paths.add(transfer_inv.filepath)
 
-        # Find unclassified taxi invoices by traveler
+        # 归档未进入行程的单据（按出行人+公司分组，落在公司层目录下）：
+        #   - 星辰基石的接送机/打车（_is_intra_city）→ "市内交通" 文件夹（单独统计）
+        #   - 其余未归入行程的打车票 → "普通打车" 文件夹
         all_invoices = self._collect_invoices()
-        unclassified_taxi = defaultdict(list)  # traveler -> list of Invoice
+        intra_group: dict = defaultdict(list)   # (traveler, company) -> 市内交通发票
+        taxi_group: dict = defaultdict(list)    # (traveler, company) -> 普通打车发票
 
         for inv in all_invoices:
-            if inv.invoice_type == "打车" and inv.filepath not in used_invoice_paths:
-                if inv.traveler:
-                    unclassified_taxi[inv.traveler].append(inv)
+            if inv.filepath in used_invoice_paths:
+                continue
+            if not inv.traveler:
+                continue
+            company = self._attributed_company(inv)
+            if self._is_intra_city(inv):
+                intra_group[(inv.traveler, company)].append(inv)
+            elif inv.invoice_type == "打车":
+                taxi_group[(inv.traveler, company)].append(inv)
 
-        # Create "普通打车" folders for each traveler
-        for traveler, taxi_invoices in unclassified_taxi.items():
-            if taxi_invoices:
-                taxi_dir = base_dir / traveler / "普通打车"
-                taxi_dir.mkdir(parents=True, exist_ok=True)
+        # 市内交通（星辰基石接送机+打车）
+        for (traveler, company), invs in intra_group.items():
+            if not invs:
+                continue
+            intra_dir = base_dir / traveler / company / "市内交通"
+            intra_dir.mkdir(parents=True, exist_ok=True)
+            for inv in invs:
+                target_path = intra_dir / inv.filename
+                try:
+                    shutil.copy2(inv.filepath, target_path)
+                    logger.info(f"Organized intra-city: {inv.filename} -> {company}/市内交通/")
+                except Exception as e:
+                    logger.error(f"Failed to copy {inv.filename}: {e}")
+            logger.info(f"Created {company}/市内交通 folder for {traveler} with {len(invs)} invoices")
+            try:
+                generate_for_folder(intra_dir, "市内交通")
+            except Exception as e:
+                logger.warning(f"统计单生成失败 市内交通: {e}")
 
-                for inv in taxi_invoices:
-                    target_path = taxi_dir / inv.filename
-                    try:
-                        shutil.copy2(inv.filepath, target_path)
-                        logger.info(f"Organized unclassified taxi: {inv.filename} -> 普通打车/")
-                    except Exception as e:
-                        logger.error(f"Failed to copy {inv.filename}: {e}")
+        # 普通打车（其余未归入行程的打车票）
+        for (traveler, company), taxi_invoices in taxi_group.items():
+            if not taxi_invoices:
+                continue
+            taxi_dir = base_dir / traveler / company / "普通打车"
+            taxi_dir.mkdir(parents=True, exist_ok=True)
 
-                logger.info(f"Created 普通打车 folder for {traveler} with {len(taxi_invoices)} invoices")
+            for inv in taxi_invoices:
+                target_path = taxi_dir / inv.filename
+                try:
+                    shutil.copy2(inv.filepath, target_path)
+                    logger.info(f"Organized unclassified taxi: {inv.filename} -> {company}/普通打车/")
+                except Exception as e:
+                    logger.error(f"Failed to copy {inv.filename}: {e}")
+
+            logger.info(f"Created {company}/普通打车 folder for {traveler} with {len(taxi_invoices)} invoices")
+            try:
+                generate_for_folder(taxi_dir, "普通打车")
+            except Exception as e:
+                logger.warning(f"统计单生成失败 普通打车: {e}")
+
+        # 孤儿单据（退票费、独立住宿、无法成链的票据）→ "孤儿单据" 文件夹（按出行人+公司分组）
+        # 物理落入 trips/ 树，便于文件浏览/归档；web 端另有实时统计区段展示明细。
+        orphan_group: dict = defaultdict(list)  # (traveler, company) -> 孤儿发票
+        for inv in self.get_orphans():
+            if not inv.traveler:
+                continue
+            company = self._attributed_company(inv)
+            orphan_group[(inv.traveler, company)].append(inv)
+
+        for (traveler, company), orphan_invoices in orphan_group.items():
+            if not orphan_invoices:
+                continue
+            orphan_dir = base_dir / traveler / company / "孤儿单据"
+            orphan_dir.mkdir(parents=True, exist_ok=True)
+            for inv in sorted(orphan_invoices, key=lambda x: x.date):
+                target_path = orphan_dir / inv.filename
+                try:
+                    shutil.copy2(inv.filepath, target_path)
+                    logger.info(f"Organized orphan: {inv.filename} -> {company}/孤儿单据/")
+                except Exception as e:
+                    logger.error(f"Failed to copy orphan {inv.filename}: {e}")
+            logger.info(f"Created {company}/孤儿单据 folder for {traveler} with {len(orphan_invoices)} invoices")
+            try:
+                generate_for_folder(orphan_dir, "孤儿单据")
+            except Exception as e:
+                logger.warning(f"统计单生成失败 孤儿单据: {e}")
 
         # Generate trip summary (but preserve existing README.md if it has custom content)
         readme_path = base_dir / "README.md"
@@ -1045,7 +1285,7 @@ class TripGrouper:
                 logger.info("Preserving existing README.md with custom content")
                 # Save existing README with a different name
                 shutil.copy2(readme_path, base_dir / "README_old.md")
-        self._generate_trip_summary(trips, readme_path, unclassified_taxi)
+        self._generate_trip_summary(trips, readme_path)
 
         # Restore preserved files to base directory
         for name, src_file in preserved_files.items():
@@ -1057,8 +1297,7 @@ class TripGrouper:
 
         return trips
 
-    def _generate_trip_summary(self, trips: List[Trip], output_path: Path,
-                               unclassified_taxi: Dict[str, List['Invoice']] = None):
+    def _generate_trip_summary(self, trips: List[Trip], output_path: Path):
         """Generate a summary markdown file for all trips."""
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write("# 出差旅程汇总\n\n")
@@ -1138,16 +1377,36 @@ class TripGrouper:
 
                     f.write("---\n\n")
 
-                # Add unclassified taxi section for this traveler
-                if unclassified_taxi and traveler in unclassified_taxi:
-                    taxi_invoices = unclassified_taxi[traveler]
-                    if taxi_invoices:
-                        f.write(f"### 普通打车\n")
-                        f.write(f"- **单据数**: {len(taxi_invoices)} 张\n\n")
-                        f.write("**单据明细**:\n\n")
-                        for inv in sorted(taxi_invoices, key=lambda x: x.date):
-                            f.write(f"- {inv.date} 打车: ({inv.amount}元)\n")
-                        f.write("\n---\n\n")
+                # 市内交通（星辰基石接送机+打车）— 不归属单次行程，单独统计
+                _all = getattr(self, "_all_invoices", [])
+                intra_for_traveler = [
+                    inv for inv in _all
+                    if inv.traveler == traveler and self._is_intra_city(inv)
+                    and inv.document_type != "行程单"  # 行程单为服务记录，不重复计费
+                ]
+                if intra_for_traveler:
+                    intra_total = sum(inv.amount for inv in intra_for_traveler)
+                    f.write(f"### 市内交通（星辰基石）\n")
+                    f.write(f"- **单据数**: {len(intra_for_traveler)} 张发票\n")
+                    f.write(f"- **合计**: ¥{intra_total:.2f} 元\n\n")
+                    f.write("**明细**:\n\n")
+                    for inv in sorted(intra_for_traveler, key=lambda x: x.date):
+                        f.write(f"- {inv.date} {inv.invoice_type}: ({inv.amount}元)\n")
+                    f.write("\n---\n\n")
+
+            # 孤儿单据（退票费、独立住宿等无法形成完整行程的单据）— 全局单列
+            orphans = self.get_orphans()
+            if orphans:
+                orphan_total = sum(inv.amount for inv in orphans)
+                f.write(f"## 孤儿单据（未形成完整行程）\n\n")
+                f.write(f"含退票费、独立住宿等无法归入单次行程的单据，共 {len(orphans)} 张，"
+                        f"合计 ¥{orphan_total:.2f} 元。\n\n")
+                f.write("| 日期 | 类型 | 金额 | 出行人 | 公司 | 线路 |\n|---|---|---|---|---|---|\n")
+                for inv in sorted(orphans, key=lambda x: x.date):
+                    route = f"{inv.origin or ''}->{inv.destination or ''}" if (inv.origin or inv.destination) else ""
+                    f.write(f"| {inv.date} | {inv.invoice_type} | {inv.amount:.2f} | "
+                            f"{inv.traveler} | {self._attributed_company(inv)} | {route} |\n")
+                f.write("\n")
 
     def generate_report(self, output_path: str = "trips_report.md"):
         """Generate a markdown report of all trips."""
@@ -1200,6 +1459,44 @@ class TripGrouper:
                 # Calculate total amount for this trip
                 trip_amount = sum(inv.amount for inv in trip.invoices)
                 f.write(f"- **金额**: ¥{trip_amount:.2f} 元\n\n")
+
+            # 市内交通：星辰基石的接送机+打车不归属单次行程，统一单列
+            all_invoices = getattr(self, "_all_invoices", [])
+            intra_city = [inv for inv in all_invoices if self._is_intra_city(inv)]
+            # 仅按发票计钱：行程单是服务记录，与发票成对存在，不重复计入合计
+            intra_invoices = [inv for inv in intra_city if inv.document_type != "行程单"]
+            intra_receipts = [inv for inv in intra_city if inv.document_type == "行程单"]
+            if intra_invoices:
+                f.write("\n---\n\n## 市内交通（星辰基石）\n\n")
+                f.write("星辰基石的接送机与打车票不计入单次出差行程，统一归入市内交通"
+                        "（仅按发票金额统计；行程单为对应服务记录，不重复计入）：\n\n")
+                f.write("| 日期 | 类型 | 金额 | 出行人 |\n|---|---|---|---|\n")
+                intra_total = 0.0
+                for inv in sorted(intra_invoices, key=lambda x: x.date):
+                    f.write(f"| {inv.date} | {inv.invoice_type} | ¥{inv.amount:.2f} | {inv.traveler} |\n")
+                    intra_total += inv.amount
+                note = f"，另 {len(intra_receipts)} 张行程单未计入" if intra_receipts else ""
+                f.write(f"\n**市内交通合计**: ¥{intra_total:.2f} 元（共 {len(intra_invoices)} 张发票{note}）\n")
+
+            # 未归入行程的单据（孤儿）：缺少对应机票/火车等无法形成完整行程链
+            attached = {inv.filepath for t in trips for inv in t.invoices}
+            intra_set = {inv.filepath for inv in all_invoices if self._is_intra_city(inv)}
+            aux_set = {inv.filepath for inv in all_invoices if self._is_auxiliary_doc(inv)}
+            orphans = [inv for inv in all_invoices
+                       if inv.filepath not in attached
+                       and inv.filepath not in intra_set
+                       and inv.filepath not in aux_set]
+            if orphans:
+                f.write("\n---\n\n## 未归入行程的单据\n\n")
+                f.write("以下单据未匹配到完整行程链（如缺少对应的机票/火车），单列如下：\n\n")
+                f.write("| 日期 | 类型 | 金额 | 出行人 | 公司 | 备注 |\n|---|---|---|---|---|---|\n")
+                orphan_total = 0.0
+                for inv in sorted(orphans, key=lambda x: x.date):
+                    note = "退票费" if inv.is_refund else ""
+                    f.write(f"| {inv.date} | {inv.invoice_type} | ¥{inv.amount:.2f} | "
+                            f"{inv.traveler} | {inv.company_dir or '未分类'} | {note} |\n")
+                    orphan_total += inv.amount
+                f.write(f"\n**未归入行程合计**: ¥{orphan_total:.2f} 元（共 {len(orphans)} 张）\n")
 
         logger.info(f"Report generated: {output_path}")
         return trips

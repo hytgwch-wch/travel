@@ -206,23 +206,28 @@ def api_record_detail(record_id):
 
 @app.route('/files')
 def files():
-    """File management page."""
+    """File management page (3-level archive: 年/公司/类型/)."""
     invoices_dir = Path('invoices')
-    files_by_type = {}
+    files_by_type = {}  # "公司 / 类型" -> [files]
 
     if invoices_dir.exists():
-        for year_dir in invoices_dir.iterdir():
-            if year_dir.is_dir():
-                for type_dir in year_dir.iterdir():
-                    if type_dir.is_dir():
-                        files = list(type_dir.glob('*.pdf'))
-                        type_name = type_dir.name
-                        if type_name not in files_by_type:
-                            files_by_type[type_name] = []
-                        files_by_type[type_name].extend([
-                            {'name': f.name, 'path': str(f), 'size': f.stat().st_size}
-                            for f in files
-                        ])
+        for pdf in invoices_dir.rglob('*.pdf'):
+            rel = pdf.relative_to(invoices_dir)
+            parts = rel.parts  # (year, company, category, file.pdf)
+            if len(parts) >= 4:
+                key = f"{parts[1]} / {parts[2]}"
+            elif len(parts) >= 2:
+                key = parts[0]
+            else:
+                key = "未分类"
+            files_by_type.setdefault(key, []).append({
+                'name': pdf.name,
+                'path': str(pdf),
+                'size': pdf.stat().st_size,
+            })
+
+    for key in files_by_type:
+        files_by_type[key].sort(key=lambda f: f['name'])
 
     return render_template('files.html', files_by_type=files_by_type)
 
@@ -278,32 +283,94 @@ def api_files_review():
 # Routes - Trips
 # ============================================
 
+def _special_folder_vm(folder, key, traveler, company):
+    """构建特殊文件夹（市内交通/孤儿单据/普通打车）的视图模型。
+
+    发票/行程单去重复用 summary_sheet.collect_folder_invoices，与统计单 .docx
+    完全同口径——同一(日期,类型,金额)的成对发票+行程单只计一次（留发票），
+    避免张数/金额被各计一遍。
+    """
+    from src.summary_sheet import collect_folder_invoices
+
+    rows = []
+    total = 0.0
+    for inv in collect_folder_invoices(folder):
+        o, d = inv.origin or '', inv.destination or ''
+        is_refund = bool(getattr(inv, 'is_refund', False))
+        if o or d:
+            route = f"{o}->{d}"
+        elif is_refund:
+            route = '退票费'
+        else:
+            route = ''
+        rows.append({'date': str(inv.date),
+                     'invoice_type': inv.invoice_type or '',
+                     'amount': inv.amount or 0.0,
+                     'route': route,
+                     'is_refund': is_refund})
+        total += inv.amount or 0.0
+    return {'key': key, 'traveler': traveler, 'company': company,
+            'count': len(rows), 'total': total, 'invoices': rows}
+
+
 @app.route('/trips')
 def trips():
-    """Trip management page."""
+    """行程管理页面（文件夹视图，延续旧版）。
+
+    目录结构 trips/{出行人}/{公司}/{起}_{止}_{目的地}/，浙大与星辰基石行程物理分开。
+    市内交通 / 孤儿单据 / 普通打车 作为公司层下的特殊文件夹单独展示并可「输出」。
+    每个（行程/特殊）文件夹可点击「输出」→ 导出到桌面「公司待报销发票」并锁定。
+    """
     trips_dir = Path('trips')
+    NON_TRIP_FOLDERS = ('普通打车', '市内交通', '孤儿单据')
     trips_by_traveler = {}
+    special = {"市内交通": [], "孤儿单据": [], "普通打车": []}
 
     if trips_dir.exists():
         for traveler_dir in trips_dir.iterdir():
-            if traveler_dir.is_dir() and not traveler_dir.name.startswith('.'):
-                traveler_trips = []
-                for trip_dir in traveler_dir.iterdir():
-                    if trip_dir.is_dir() and trip_dir.name != '普通打车':
-                        # Parse trip folder name
-                        parts = trip_dir.name.split('_')
-                        if len(parts) >= 3:
-                            traveler_trips.append({
-                                'name': trip_dir.name,
-                                'start_date': parts[0],
-                                'end_date': parts[1],
-                                'destination': parts[2],
-                                'invoice_count': len(list(trip_dir.glob('*.pdf')))
-                            })
-                traveler_trips.sort(key=lambda x: x['start_date'], reverse=True)
-                trips_by_traveler[traveler_dir.name] = traveler_trips
+            if not (traveler_dir.is_dir() and not traveler_dir.name.startswith('.')):
+                continue
+            by_company = {}
+            for company_dir in traveler_dir.iterdir():
+                if not company_dir.is_dir():
+                    continue
+                company_trips = []
+                for trip_dir in company_dir.iterdir():
+                    if not trip_dir.is_dir():
+                        continue
+                    key = f"{traveler_dir.name}/{company_dir.name}/{trip_dir.name}"
+                    if trip_dir.name in NON_TRIP_FOLDERS:
+                        special[trip_dir.name].append(
+                            _special_folder_vm(trip_dir, key, traveler_dir.name, company_dir.name))
+                        continue
+                    parts = trip_dir.name.split('_')
+                    if len(parts) >= 3:
+                        company_trips.append({
+                            'name': trip_dir.name,
+                            'key': key,
+                            'company': company_dir.name,
+                            'start_date': parts[0],
+                            'end_date': parts[1],
+                            'destination': parts[2],
+                            'invoice_count': len(list(trip_dir.glob('*.pdf')))
+                        })
+                if company_trips:
+                    company_trips.sort(key=lambda x: x['start_date'], reverse=True)
+                    by_company[company_dir.name] = company_trips
+            if by_company:
+                trips_by_traveler[traveler_dir.name] = by_company
 
-    return render_template('trips.html', trips_by_traveler=trips_by_traveler)
+    from src.export_lock import exported_keys
+    locked = exported_keys()
+
+    return render_template('trips.html',
+        trips_by_traveler=trips_by_traveler,
+        intra_folders=special["市内交通"],
+        orphan_folders=special["孤儿单据"],
+        taxi_folders=special["普通打车"],
+        exported_keys=sorted(locked),
+        generated_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+    )
 
 
 @app.route('/api/trips/<path:trip_path>')
@@ -331,6 +398,34 @@ def api_trip_detail(trip_path):
         'invoices': invoices,
         'readme': readme_content
     })
+
+
+@app.route('/api/export/<path:folder_path>', methods=['POST'])
+def api_export_folder(folder_path):
+    """输出（导出）某个行程/孤儿/市内交通/普通打车 文件夹到桌面「公司待报销发票」并锁定。
+
+    锁定后：该文件夹的发票从后续行程重新分组中排除，物理目录在重建时保留。
+    """
+    from src.export_lock import export_folder, is_exported
+    from pathlib import Path as _Path
+
+    project_root = _Path(__file__).parent.parent
+    src = project_root / 'trips' / folder_path
+    if not src.is_dir():
+        return jsonify({'success': False, 'error': f'文件夹不存在: {folder_path}'}), 404
+
+    try:
+        if is_exported(folder_path):
+            return jsonify({'success': True, 'locked': True,
+                            'message': '该文件夹已输出并锁定', 'key': folder_path})
+        result = export_folder(project_root / 'trips', folder_path)
+        return jsonify({'success': True, 'locked': True,
+                        'key': folder_path, 'dest': result.get('dest'),
+                        'invoice_count': result.get('invoice_count'),
+                        'total': result.get('total'),
+                        'message': f'已输出并锁定：{result.get("dest")}'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ============================================

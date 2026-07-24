@@ -32,6 +32,7 @@
                     <th width="80">ID</th>
                     <th>文件名</th>
                     <th width="100">类型</th>
+                    <th width="120">购买方</th>
                     <th width="150">处理时间</th>
                     <th width="80">状态</th>
                     <th>备注</th>
@@ -43,6 +44,7 @@
                     <td>{{ record.id }}</td>
                     <td title="{{ record.final_path or record.remote_path }}">{{ (record.final_path or record.remote_path)[:60] }}{{ '...' if (record.final_path or record.remote_path)|length > 60 else '' }}</td>
                     <td>{{ record.invoice_type or '-' }}</td>
+                    <td>{{ record.buyer_company or '未分类' }}</td>
                     <td>{{ record.processed_at.strftime('%Y-%m-%d %H:%M:%S') if record.processed_at else '-' }}</td>
                     <td>
                         {% if record.status == 'success' %}

@@ -321,7 +321,7 @@ class EmailSyncManager:
             logger.debug(f"IMAP search criteria: {search_cmd}")
 
             # Search for matching emails
-            status, messages = self._imap.search(None, search_cmd)
+            status, messages = self._imap.uid('search', None, search_cmd)
 
             if status != 'OK':
                 logger.error(f"IMAP search failed: {status}")
@@ -365,7 +365,8 @@ class EmailSyncManager:
         """
         try:
             # Fetch email headers only first
-            status, msg_data = self._imap.fetch(
+            status, msg_data = self._imap.uid(
+                'fetch',
                 email_id,
                 '(BODY.PEEK[HEADER])'
             )
@@ -396,18 +397,24 @@ class EmailSyncManager:
                 email_date = datetime.now()
 
             # Fetch BODYSTRUCTURE to check for attachments
-            status2, struct_data = self._imap.fetch(email_id, '(BODYSTRUCTURE)')
+            status2, struct_data = self._imap.uid('fetch', email_id, '(BODYSTRUCTURE)')
             has_attachment = False
             if status2 == 'OK' and struct_data and struct_data[0]:
                 struct_str = str(struct_data[0])
                 # Check for attachment indicators
-                # BODYSTRUCTURE format: ("content_type" ("name" "filename") or ("attachment" ...)
+                # BODYSTRUCTURE format: ("content_type" "subtype" ("name" "filename") ("attachment" ...))
+                # Normalize quotes first so quoted tokens like ("application" "pdf") and
+                # RFC 2231 name*/filename* params are detectable. Bare "name" alone is too
+                # broad (text parts also carry ("name" "charset")), so match NAME* / FILENAME.
+                normalized = struct_str.replace('"', ' ')
+                norm_upper = normalized.upper()
                 has_attachment = (
-                    '("attachment"' in struct_str or  # Explicit attachment disposition
-                    'APPLICATION/PDF' in struct_str.upper() or
-                    '("image"' in struct_str.lower() or  # Image content type
-                    'IMAGE/' in struct_str.upper() or
-                    '("name"' in struct_str.lower()  # Has filename parameter
+                    '(ATTACHMENT)' in norm_upper or                            # explicit disposition
+                    ('APPLICATION' in norm_upper and 'PDF' in norm_upper) or   # ("application" "pdf")
+                    'OCTET-STREAM' in norm_upper or                            # application/octet-stream
+                    '(IMAGE' in norm_upper or 'IMAGE/' in norm_upper or        # image parts
+                    'NAME*' in norm_upper or                                   # RFC 2231 name* param
+                    '(FILENAME' in norm_upper                                  # filename / filename*
                 )
 
             return EmailMeta(
@@ -491,7 +498,7 @@ class EmailSyncManager:
         """
         try:
             # Fetch complete email
-            status, msg_data = self._imap.fetch(email_id, '(RFC822)')
+            status, msg_data = self._imap.uid('fetch', email_id, '(RFC822)')
 
             if status != 'OK':
                 return []
@@ -828,7 +835,7 @@ class EmailSyncManager:
 
                 if attachments and self.email_config.mark_as_read:
                     # Mark email as seen
-                    self._imap.store(email_meta.uid.encode(), '+FLAGS', '\\Seen')
+                    self._imap.uid('store', email_meta.uid.encode(), '+FLAGS', '\\Seen')
                     logger.debug(f"Marked email {email_meta.uid} as read")
 
             except Exception as e:

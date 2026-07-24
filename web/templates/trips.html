@@ -6,40 +6,110 @@
 <div class="page-header">
     <h1 class="page-title">行程管理</h1>
     <div>
-        <button class="btn btn-success" onclick="generateAllForms()">📄 生成全部报销单</button>
+        <span style="color:#666;font-size:13px;">更新于 {{ generated_at }}</span>
     </div>
 </div>
 
-<!-- Trips by Traveler -->
-{% for traveler_name, trips in trips_by_traveler.items() %}
-<div class="card">
-    <h2 class="card-title">👤 {{ traveler_name }} ({{ trips|length }} 个行程)</h2>
+<div class="alert alert-info">
+    行程按 <code>trips/{出行人}/{公司}/{起}_{止}_{目的地}/</code> 归类，浙大与星辰基石行程物理分开。
+    每个文件夹已附带 <b>统计单.docx</b>（Word）。
+    点击「<b>输出</b>」将该文件夹导出到桌面 <code>公司待报销发票</code> 并 <b>锁定</b>（锁定后不再变动/处理）。
+</div>
 
-    {% if trips %}
-    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px;">
-        {% for trip in trips %}
-        <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 15px; cursor: pointer;" onclick="viewTrip('{{ traveler_name }}/{{ trip.name }}')">
-            <h3 style="margin-bottom: 10px;">{{ trip.destination }}</h3>
-            <p style="color: #666; font-size: 14px; margin-bottom: 5px;">
-                📅 {{ trip.start_date }} ~ {{ trip.end_date }}
-            </p>
-            <p style="color: #666; font-size: 14px;">
-                📄 {{ trip.invoice_count }} 张发票
-            </p>
+{% macro folder_export_button(key) %}
+{% if key in exported_keys %}
+<span class="badge" style="background:#9ca3af;">🔒 已输出</span>
+{% else %}
+<button class="btn btn-success" style="padding:4px 10px;font-size:13px;"
+        onclick="event.stopPropagation(); exportFolder('{{ key }}')">📤 输出</button>
+{% endif %}
+{% endmacro %}
+
+{% macro invoice_table(rows) %}
+<div class="table-container">
+    <table>
+        <thead><tr><th width="110">日期</th><th width="90">类型</th><th width="100">金额</th><th>线路/备注</th></tr></thead>
+        <tbody>
+            {% for r in rows %}
+            <tr>
+                <td>{{ r.date }}</td>
+                <td>{{ r.invoice_type }}{% if r.is_refund %} <span class="badge badge-warning">退票费</span>{% endif %}</td>
+                <td>¥{{ "%.2f"|format(r.amount) }}</td>
+                <td style="color:#666;font-size:13px;">{{ r.route }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" style="text-align:center;color:#999;">无</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endmacro %}
+
+{% macro special_section(title, icon, folders) %}
+{% if folders %}
+<div class="card">
+    <h2 class="card-title">{{ icon }} {{ title }} · {{ folders|length }} 个文件夹</h2>
+    {% for f in folders %}
+    <div style="margin-bottom: 18px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
+            <div>
+                <b>{{ f.traveler }}</b> / {{ f.company }}
+                <span style="color:#666;">· {{ f.count }} 张 · ¥{{ "%.2f"|format(f.total) }}</span>
+            </div>
+            <div>{{ folder_export_button(f.key) }}</div>
         </div>
-        {% endfor %}
+        {{ invoice_table(f.invoices) }}
     </div>
-    {% else %}
-    <p style="color: #666;">暂无行程</p>
-    {% endif %}
+    {% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{{ special_section("市内交通", "🚕", intra_folders) }}
+{{ special_section("孤儿单据", "🧾", orphan_folders) }}
+{{ special_section("普通打车", "🚖", taxi_folders) }}
+
+<!-- 行程（按出行人 → 公司分组）-->
+{% for traveler_name, by_company in trips_by_traveler.items() %}
+<div class="card">
+    <h2 class="card-title">👤 {{ traveler_name }}</h2>
+    {% for company_name, trips in by_company.items() %}
+    <div style="margin-bottom: 20px;">
+        <h3 style="font-size: 16px; color: #374151; margin-bottom: 10px; padding-left: 8px; border-left: 4px solid #3b82f6;">
+            🏢 {{ company_name }}（{{ trips|length }} 个行程）
+        </h3>
+        {% if trips %}
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px;">
+            {% for trip in trips %}
+            <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 15px; cursor: pointer; position: relative;"
+                 onclick="viewTrip('{{ trip.key }}')">
+                {% if trip.key in exported_keys %}
+                <span style="position:absolute; top:8px; right:8px; background:#9ca3af; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px;">🔒 已输出</span>
+                {% endif %}
+                <h3 style="margin-bottom: 10px;">{{ trip.destination }}</h3>
+                <p style="color: #666; font-size: 14px; margin-bottom: 5px;">📅 {{ trip.start_date }} ~ {{ trip.end_date }}</p>
+                <p style="color: #666; font-size: 14px; margin-bottom: 10px;">📄 {{ trip.invoice_count }} 张发票</p>
+                <div onclick="event.stopPropagation();">
+                    {{ folder_export_button(trip.key) }}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p style="color: #666;">暂无行程</p>
+        {% endif %}
+    </div>
+    {% endfor %}
 </div>
 {% else %}
+{% if not intra_folders and not orphan_folders and not taxi_folders %}
 <div class="card">
     <p style="text-align: center; color: #666;">暂无行程数据</p>
     <p style="text-align: center; margin-top: 10px;">
         <a href="{{ url_for('tasks') }}" class="btn">生成行程</a>
     </p>
 </div>
+{% endif %}
 {% endfor %}
 
 <!-- Trip Detail Modal -->
@@ -50,10 +120,7 @@
             <button onclick="closeModal()" style="background: none; border: none; font-size: 24px; cursor: pointer;">&times;</button>
         </div>
         <div id="modal-content">
-            <div class="loading">
-                <div class="spinner"></div>
-                <p>加载中...</p>
-            </div>
+            <div class="loading"><div class="spinner"></div><p>加载中...</p></div>
         </div>
     </div>
 </div>
@@ -61,58 +128,37 @@
 
 {% block scripts %}
 <script>
-let currentTripPath = null;
+function encodePath(path) {
+    return path.split('/').map(encodeURIComponent).join('/');
+}
 
-function viewTrip(tripPath) {
-    currentTripPath = tripPath;
+function viewTrip(tripKey) {
     document.getElementById('trip-modal').style.display = 'block';
-    document.getElementById('modal-content').innerHTML = `
-        <div class="loading">
-            <div class="spinner"></div>
-            <p>加载中...</p>
-        </div>
-    `;
+    document.getElementById('modal-content').innerHTML = '<div class="loading"><div class="spinner"></div><p>加载中...</p></div>';
 
-    fetch('/api/trips/' + encodeURIComponent(tripPath))
+    fetch('/api/trips/' + encodePath(tripKey))
         .then(r => r.json())
         .then(data => {
             if (data.error) {
                 document.getElementById('modal-content').innerHTML = '<p class="badge badge-error">❌ ' + data.error + '</p>';
                 return;
             }
-
-            document.getElementById('modal-title').textContent = data.path.split('/')[-1];
-
+            document.getElementById('modal-title').textContent = data.path.split('/').pop();
             let html = '';
-
-            // README
             if (data.readme) {
                 html += '<div style="margin-bottom: 20px;"><h3>行程汇总</h3><pre style="background: #f9fafb; padding: 15px; border-radius: 6px; overflow-x: auto;">' + data.readme + '</pre></div>';
             }
-
-            // Invoices
             html += '<h3>发票列表 (' + data.invoices.length + ')</h3>';
-            html += '<div style="max-height: 300px; overflow-y: auto;">';
-            html += '<table style="margin-top: 10px;"><thead><tr><th>文件名</th><th>大小</th></tr></thead><tbody>';
-            data.invoices.forEach(inv => {
-                html += '<tr><td>' + inv.name + '</td><td>' + formatFileSize(inv.size) + '</td></tr>';
-            });
+            html += '<div style="max-height: 300px; overflow-y: auto;"><table style="margin-top: 10px;"><thead><tr><th>文件名</th><th>大小</th></tr></thead><tbody>';
+            data.invoices.forEach(inv => { html += '<tr><td>' + inv.name + '</td><td>' + formatFileSize(inv.size) + '</td></tr>'; });
             html += '</tbody></table></div>';
-
-            // Actions
-            html += '<div style="margin-top: 20px;"><button class="btn" onclick="generateTripForm(\'' + data.path + '\')">📄 生成报销单</button></div>';
-
+            html += '<div style="margin-top: 20px;"><button class="btn btn-success" onclick="exportFolder(\'' + tripKey + '\')">📤 输出此行程（导出并锁定）</button></div>';
             document.getElementById('modal-content').innerHTML = html;
         })
-        .catch(err => {
-            document.getElementById('modal-content').innerHTML = '<p class="badge badge-error">❌ 加载失败</p>';
-        });
+        .catch(() => { document.getElementById('modal-content').innerHTML = '<p class="badge badge-error">❌ 加载失败</p>'; });
 }
 
-function closeModal() {
-    document.getElementById('trip-modal').style.display = 'none';
-    currentTripPath = null;
-}
+function closeModal() { document.getElementById('trip-modal').style.display = 'none'; }
 
 function formatFileSize(bytes) {
     if (bytes < 1024) return bytes + ' B';
@@ -120,77 +166,17 @@ function formatFileSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-function generateTripForm(tripPath) {
-    if (!confirm('确定要为该行程生成报销单吗？')) return;
-
-    const btn = event.target;
-    const originalText = btn.innerHTML;
-    btn.innerHTML = '⏳ 生成中...';
-    btn.disabled = true;
-
-    fetch(`/api/forms/generate/${tripPath}`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        }
-    })
-    .then(resp => resp.json())
-    .then(data => {
-        if (data.success) {
-            alert('✅ ' + data.message);
-            // Optionally download the form
-            if (data.download_url) {
-                window.open(data.download_url, '_blank');
-            }
-        } else {
-            alert('❌ ' + data.error);
-        }
-    })
-    .catch(err => {
-        alert('❌ 生成失败: ' + err);
-    })
-    .finally(() => {
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-    });
+function exportFolder(key) {
+    if (!confirm('确定输出到桌面「公司待报销发票」并锁定？\n锁定后该部分将不再变动和处理。')) return;
+    fetch('/api/export/' + encodePath(key), { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) { alert('✅ ' + data.message); location.reload(); }
+            else { alert('❌ ' + data.error); }
+        })
+        .catch(err => { alert('❌ 输出失败: ' + err); });
 }
 
-function generateAllForms() {
-    if (!confirm('确定要为所有行程生成报销单吗？这可能需要一些时间。')) return;
-
-    const btn = event.target;
-    const originalText = btn.innerHTML;
-    btn.innerHTML = '⏳ 批量生成中...';
-    btn.disabled = true;
-
-    fetch('/api/forms/generate-all', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        }
-    })
-    .then(resp => resp.json())
-    .then(data => {
-        if (data.success) {
-            alert('✅ ' + data.message);
-        } else {
-            alert('❌ ' + data.error);
-        }
-    })
-    .catch(err => {
-        alert('❌ 生成失败: ' + err);
-    })
-    .finally(() => {
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-    });
-}
-
-// Close modal on outside click
-document.getElementById('trip-modal').addEventListener('click', function(e) {
-    if (e.target === this) {
-        closeModal();
-    }
-});
+document.getElementById('trip-modal').addEventListener('click', function(e) { if (e.target === this) closeModal(); });
 </script>
 {% endblock %}

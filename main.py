@@ -120,9 +120,10 @@ def cmd_trips(args):
     grouper = TripGrouper(invoices_dir=args.input)
 
     if args.report_only:
-        # Generate report only
-        trips = grouper.generate_report(args.output)
-        print(f"\nReport generated: {args.output}")
+        # Generate report only (write README.md inside the output directory)
+        report_path = str(Path(args.output) / "README.md")
+        trips = grouper.generate_report(report_path)
+        print(f"\nReport generated: {report_path}")
         print(f"Total trips: {len(trips)}")
     else:
         # Generate trip directories and report

@@ -85,16 +85,11 @@ class InvoiceRenamer:
         base_name = "_".join(filter(None, [date_str] + name_parts + [amount_str, info.traveler or "unknown"]))
 
         # Add document type suffix for certain types
-        if info.type == InvoiceType.AIRPORT_TRANSFER:
-            # 接送机: 有路线信息的是行程单，没有的是发票
-            if info.origin and info.destination:
-                # Trip receipt - has route info
-                base_name += "_行程单"
-            else:
-                # Car invoice - no route info
-                base_name += "_发票"
-        elif info.type == InvoiceType.TAXI:
-            # 打车: is_trip_receipt 标志判断是行程单还是发票
+        # 接送机/打车 统一用 is_trip_receipt（parser 基于 OCR 内容判定）决定后缀。
+        # 不再用“有无路线”判断接送机：携程「用车行程单」的“上车点/下车点”格式
+        # 常无法被 _extract_airport_transfer_route 提取出 origin/destination，导致
+        # 行程单被误命名成 _发票，进而在市内交通统计中被当作发票重复计入（[[bug-038]]）。
+        if info.type in (InvoiceType.AIRPORT_TRANSFER, InvoiceType.TAXI):
             if info.is_trip_receipt:
                 base_name += "_行程单"
             else:
